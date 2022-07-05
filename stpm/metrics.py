@@ -12,6 +12,7 @@ from pysmartthings import SmartThings, DeviceEntity, LocationEntity, RoomEntity
 LABEL_NAMES = [
     "device_id",
     "device_name",
+    "device_label",
     "location_id",
     "location_name",
     "room_id",
@@ -98,6 +99,7 @@ class DeviceMetric:
         return metric.labels(
             device_id=self.device.device_id,
             device_name=self.device.name,
+            device_label=self.device.label,
             location_id=self.device.location_id,
             location_name=self.location.name if self.location else None,
             room_id=self.device.room_id,

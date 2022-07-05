@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stpm.fullname" . }}
+  labels:
+    {{- include "stpm.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: 9000
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "stpm.selectorLabels" . | nindent 4 }}

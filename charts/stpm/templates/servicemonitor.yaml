@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "stpm.fullname" . }}
+  labels:
+    {{- include "stpm.labels" . | nindent 4 }}
+    prometheus: {{ .Values.prometheus.servicemonitor.prometheusInstance }}
+    {{- with .Values.prometheus.servicemonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  jobLabel: {{ template "stpm.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "stpm.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - targetPort: 9000
+      path: /metrics
+      interval: {{ .Values.prometheus.servicemonitor.interval }}
+      scrapeTimeout: {{ .Values.prometheus.servicemonitor.scrapeTimeout }}
+      honorLabels: {{ .Values.prometheus.servicemonitor.honorLabels }}
