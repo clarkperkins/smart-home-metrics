@@ -2,6 +2,7 @@ name: Build & Deploy
 
 on:
   push:
+    tags: [ '*' ]
     branches: [ main ]
   pull_request:
     branches: [ main ]
@@ -14,12 +15,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
@@ -32,70 +33,66 @@ jobs:
         run: |
           poetry install
 
-#      - name: Run Checks
-#        run: |
-#          make check
-#        env:
-#          DJANGO_ENV: test
-#
+      - name: Run Checks
+        run: |
+          make check
+
 #      - name: Run Tests
 #        run: |
 #          make test
-#        env:
-#          DJANGO_ENV: test
-#          DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/postgres'
-#          BONSAI_URL: 'http://localhost:9200'
-#
-#      - name: Run Integration Tests
-#        run: |
-#          make integration-test
-#        env:
-#          DJANGO_ENV: test
-#          DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/postgres'
-#          BONSAI_URL: 'http://localhost:9200'
 #
 #      - name: Publish Test Results
 #        uses: EnricoMi/publish-unit-test-result-action@v1
 #        if: always()
 #        with:
 #          files: reports/tests/*.xml
-#
-#      - name: SonarCloud Scan
-#        uses: sonarsource/sonarcloud-github-action@v1.6
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  docker:
-    name: Docker Build & Deploy
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@v1.6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  deploy:
+    name: Deploy
+
+    needs: build
 
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      - name: Login to GitHub Container Registry
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Docker Login to GHCR
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: clarkperkins
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Helm Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u clarkperkins --password-stdin https://ghcr.io
+
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v3
+        uses: docker/metadata-action@v4
         with:
           images: ghcr.io/clarkperkins/stpm
           tags: |
+            type=semver,pattern={{version}}
             type=ref,event=branch
             type=ref,event=pr
           flavor: |
@@ -103,7 +100,7 @@ jobs:
 
       - name: Docker Build and Push
         id: docker_build
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@v3
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -111,30 +108,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  helm:
-    name: Helm Build & Deploy
-
-    runs-on: ubuntu-latest
-
-#    needs: docker
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v3
-
-      - name: Helm Login
+      - name: Helm Chart Version
+        id: helm-version
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u clarkperkins --password-stdin https://ghcr.io
+          if [ "${{ github.event_name }}" == "tag" ]; then
+            echo "::set-output name=version::${{ steps.meta.outputs.version }}"
+          else
+            echo "::set-output name=version::$(date +'%Y.%-m.%-d')-${{ steps.meta.outputs.version }}.$(date +'%-H.%-M.%-S')"
+          fi
 
       - name: Helm Build
         run: |
-          helm package charts/stpm
+          helm package charts/stpm -u -d charts --version ${{ steps.helm-version.outputs.version }} --app-version ${{ steps.meta.outputs.version }}
 
       - name: Helm Push
         run: |
-          helm push stpm-0.1.0.tgz oci://ghcr.io/clarkperkins
+          helm push charts/stpm-${{ steps.helm-version.outputs.version }}.tgz oci://ghcr.io/clarkperkins

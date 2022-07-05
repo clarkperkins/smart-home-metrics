@@ -15,7 +15,7 @@ spec:
       {{- include "stpm.selectorLabels" . | nindent 6 }}
   endpoints:
     - targetPort: 9000
-      path: /metrics
+      path: /
       interval: {{ .Values.prometheus.servicemonitor.interval }}
       scrapeTimeout: {{ .Values.prometheus.servicemonitor.scrapeTimeout }}
       honorLabels: {{ .Values.prometheus.servicemonitor.honorLabels }}

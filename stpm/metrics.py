@@ -1,13 +1,13 @@
 import asyncio
 import os
+from collections import defaultdict
 from functools import lru_cache
 from typing import Iterable, Sequence
 
-from collections import defaultdict
 from aiohttp import ClientSession
-from prometheus_client import Gauge, Enum
+from prometheus_client import Enum, Gauge
 from prometheus_client.metrics import T
-from pysmartthings import SmartThings, DeviceEntity, LocationEntity, RoomEntity
+from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
 
 LABEL_NAMES = [
     "device_id",
@@ -51,13 +51,11 @@ async def lookup_locations(api: SmartThings) -> dict[str, LocationEntity]:
 async def lookup_rooms(
     locations: Iterable[LocationEntity],
 ) -> dict[str, dict[str, RoomEntity]]:
-    room_coros = [
-        location.rooms() for location in locations
-    ]
+    room_coros = [location.rooms() for location in locations]
 
     location_rooms = await asyncio.gather(*room_coros)
 
-    room_lookup = defaultdict(dict)
+    room_lookup: dict[str, dict[str, RoomEntity]] = defaultdict(dict)
     for rooms in location_rooms:
         for room in rooms:
             room_lookup[room.location_id][room.room_id] = room
@@ -120,11 +118,10 @@ class DeviceMetric:
                     if attribute in self.ignore:
                         continue
 
-                    key = f"smartthings_{component}_{capability}_{attribute}".replace('-', '_')
+                    key = f"smartthings_{component}_{capability}_{attribute}".replace(
+                        "-", "_"
+                    )
                     value = data.get("value")
-
-                    # if attribute == "DeviceWatch-DeviceStatus":
-                    #     print(f"{key} = {data}")
 
                     if isinstance(value, (int, float)):
                         unit = data.get("unit")
@@ -142,11 +139,20 @@ class DeviceMetric:
                         self.add_labels(get_gauge(f"{key}_z")).set(value[2])
                     elif attribute == "thermostatFanMode":
                         if value:
-                            e = self.add_labels(get_enum(key, tuple(data["data"]["supportedThermostatFanModes"])))
+                            e = self.add_labels(
+                                get_enum(
+                                    key,
+                                    tuple(data["data"]["supportedThermostatFanModes"]),
+                                )
+                            )
                             e.state(value)
                     elif attribute == "thermostatMode":
                         if value:
-                            e = self.add_labels(get_enum(key, tuple(data["data"]["supportedThermostatModes"])))
+                            e = self.add_labels(
+                                get_enum(
+                                    key, tuple(data["data"]["supportedThermostatModes"])
+                                )
+                            )
                             e.state(value)
                     # else:
                     #     print(f"{key} = {data}")
