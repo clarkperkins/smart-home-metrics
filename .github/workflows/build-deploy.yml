@@ -99,7 +99,7 @@ jobs:
             latest=${{ github.ref_name == github.event.repository.default_branch }}
 
       - name: Docker Build and Push
-        id: docker_build
+        id: docker-build
         uses: docker/build-push-action@v3
         with:
           context: .
@@ -119,8 +119,8 @@ jobs:
 
       - name: Helm Build
         run: |
-          helm package charts/stpm -u -d charts --version ${{ steps.helm-version.outputs.version }} --app-version ${{ steps.meta.outputs.version }}
+          helm package charts/smartthings-metrics -u -d charts --version ${{ steps.helm-version.outputs.version }} --app-version ${{ steps.meta.outputs.version }}
 
       - name: Helm Push
         run: |
-          helm push charts/stpm-${{ steps.helm-version.outputs.version }}.tgz oci://ghcr.io/clarkperkins
+          helm push charts/smartthings-metrics-${{ steps.helm-version.outputs.version }}.tgz oci://ghcr.io/clarkperkins

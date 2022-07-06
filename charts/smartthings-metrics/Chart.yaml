@@ -1,5 +1,5 @@
 apiVersion: v2
-name: stpm
+name: smartthings-metrics
 description: SmartThings prometheus metrics
 
 # A chart can be either an 'application' or a 'library' chart.
