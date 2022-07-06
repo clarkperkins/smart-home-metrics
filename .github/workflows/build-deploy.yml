@@ -111,7 +111,7 @@ jobs:
       - name: Helm Chart Version
         id: helm-version
         run: |
-          if [ "${{ github.event_name }}" == "tag" ]; then
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
             echo "::set-output name=version::${{ steps.meta.outputs.version }}"
           else
             echo "::set-output name=version::$(date +'%Y.%-m.%-d')-${{ steps.meta.outputs.version }}.$(date +'%-H.%-M.%-S')"
