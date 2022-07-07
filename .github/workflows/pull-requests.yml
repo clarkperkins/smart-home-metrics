@@ -1,0 +1,10 @@
+name: Pull Requests
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml

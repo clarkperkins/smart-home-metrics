@@ -38,7 +38,9 @@ def get_enum(key: str, states: tuple[str]) -> Enum:
     return Enum(key, "SmartThings Device", labelnames=LABEL_NAMES, states=states)
 
 
-async def lookup_locations(api: SmartThings) -> dict[str, LocationEntity]:
+async def lookup_locations(
+    api: SmartThings,
+) -> dict[str, LocationEntity]:
     locations = await api.locations()
 
     location_lookup = {}

@@ -16,9 +16,7 @@ def main():
 @click.option("--port", "-p", type=int, default=9000)
 def run(address: str, port: int):
     start_http_server(port=port, addr=address)
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(collect_metrics())
+    asyncio.run(collect_metrics())
 
 
 if __name__ == "__main__":

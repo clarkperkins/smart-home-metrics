@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "stpm"
-version = "0.1.0"
+version = "0.0.0"
 description = "SmartThings Prometheus Metrics"
 authors = ["Clark Perkins <r.clark.perkins@gmail.com>"]
 
