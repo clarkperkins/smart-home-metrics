@@ -4,17 +4,20 @@ build-backend = "poetry.core.masonry.api"
 
 
 [tool.poetry]
-name = "stpm"
+name = "shm"
 version = "0.0.0"
-description = "SmartThings Prometheus Metrics"
+description = "Smart Home Prometheus Metrics"
 authors = ["Clark Perkins <r.clark.perkins@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 
 click = "*"
+colorlog = "*"
 prometheus-client = "*"
+pyecobee = "*"
 pysmartthings = "*"
+pyyaml = "*"
 
 [tool.poetry.dev-dependencies]
 black = "*"
@@ -25,9 +28,10 @@ pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-mock = "*"
+types-pyyaml = "*"
 
 [tool.poetry.scripts]
-stpm = 'stpm.cli:main'
+shm = 'shm.cli:main'
 
 
 [tool.coverage.run]
@@ -54,7 +58,7 @@ ignore_errors = true
 
 [tool.coverage.html]
 directory = "reports/coverage/html"
-title = "stpm coverage"
+title = "shm coverage"
 
 [tool.coverage.xml]
 output = "reports/coverage/coverage.xml"
@@ -67,6 +71,7 @@ skip_gitignore = true
 
 [[tool.mypy.overrides]]
 module = [
+    "pyecobee",
     "pysmartthings",
 ]
 ignore_missing_imports = true

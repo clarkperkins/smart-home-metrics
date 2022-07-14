@@ -8,32 +8,32 @@ reports:
 	mkdir -p reports/tests
 
 format/isort:
-	poetry run isort stpm
+	poetry run isort shm
 
 format/black:
-	poetry run black stpm
+	poetry run black shm
 
 format: format/isort format/black
 
 check/isort:
-	poetry run isort stpm --check
+	poetry run isort shm --check
 
 check/black:
-	poetry run black stpm --check
+	poetry run black shm --check
 
 check/pylint: reports
-	poetry run pylint stpm --reports=n --exit-zero --msg-template="{path}:{line}: [{msg_id}({symbol}), {obj}] {msg}" > reports/pylint.txt
+	poetry run pylint shm --reports=n --exit-zero --msg-template="{path}:{line}: [{msg_id}({symbol}), {obj}] {msg}" > reports/pylint.txt
 
 check/mypy:
-	poetry run mypy stpm
+	poetry run mypy shm
 
 check: check/isort check/black check/pylint check/mypy
 
 test/pytest/xml: reports
-	poetry run pytest --junit-xml=reports/tests/unit.xml --cov=stpm --cov-report=xml
+	poetry run pytest --junit-xml=reports/tests/unit.xml --cov=shm --cov-report=xml
 
 test/pytest/html: reports
-	poetry run pytest --cov=stpm --cov-report=html
+	poetry run pytest --cov=shm --cov-report=html
 
 test: test/pytest/xml
 

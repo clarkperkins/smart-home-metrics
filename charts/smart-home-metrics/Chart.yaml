@@ -1,5 +1,5 @@
 apiVersion: v2
-name: smartthings-metrics
+name: smart-home-metrics
 description: SmartThings prometheus metrics
 
 # A chart can be either an 'application' or a 'library' chart.

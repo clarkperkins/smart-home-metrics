@@ -6,12 +6,16 @@ on:
     branches: [ main ]
 
 jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   docker:
     name: Docker Build & Push
+    needs: build
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      image-version: ${{ steps.meta.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -41,31 +45,9 @@ jobs:
           username: clarkperkins
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ghcr.io/clarkperkins/stpm
-          tags: |
-            type=semver,pattern={{version}}
-            type=ref,event=branch
-            type=ref,event=pr
-          flavor: |
-            latest=${{ github.ref_name == github.event.repository.default_branch }}
-
-      - name: Library Version
-        id: version
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "::set-output name=version::${{ steps.meta.outputs.version }}"
-          else
-            # Use the date as the semver instead
-            echo "::set-output name=version::$(date +'%Y.%-m.%-d')-dev+${{ github.sha }}"
-          fi
-
       - name: Set Library Version
         run: |
-          poetry version ${{ steps.version.outputs.version }}
+          poetry version ${{ needs.build.outputs.version }}
 
       - name: Docker Build and Push
         id: docker-build
@@ -74,12 +56,12 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ needs.build.outputs.image-tags }}
+          labels: ${{ needs.build.outputs.image-labels }}
 
   helm:
     name: Helm Build & Push
-    needs: docker
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -96,8 +78,8 @@ jobs:
 
       - name: Helm Build
         run: |
-          helm package charts/smartthings-metrics -u -d charts --version ${{ needs.docker.outputs.version }} --app-version ${{ needs.docker.outputs.image-version }}
+          helm package charts/smart-home-metrics -u -d charts --version ${{ needs.build.outputs.version }} --app-version ${{ needs.build.outputs.image-version }}
 
       - name: Helm Push
         run: |
-          helm push charts/smartthings-metrics-${{ needs.docker.outputs.version }}.tgz oci://ghcr.io/clarkperkins
+          helm push charts/smart-home-metrics-${{ needs.build.outputs.version }}.tgz oci://ghcr.io/clarkperkins
