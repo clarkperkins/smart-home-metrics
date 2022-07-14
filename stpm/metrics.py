@@ -141,18 +141,20 @@ class DeviceMetric:
                         self.add_labels(get_gauge(f"{key}_z")).set(value[2])
                     elif attribute == "thermostatFanMode":
                         if value:
+                            modes = attributes["supportedThermostatFanModes"]["value"]
                             e = self.add_labels(
                                 get_enum(
                                     key,
-                                    tuple(data["data"]["supportedThermostatFanModes"]),
+                                    tuple(modes),
                                 )
                             )
                             e.state(value)
                     elif attribute == "thermostatMode":
                         if value:
+                            modes = attributes["supportedThermostatModes"]["value"]
                             e = self.add_labels(
                                 get_enum(
-                                    key, tuple(data["data"]["supportedThermostatModes"])
+                                    key, tuple(modes)
                                 )
                             )
                             e.state(value)
