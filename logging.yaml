@@ -1,0 +1,31 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  simple:
+    (): shm.logging.HighlightingFormatter
+    style: '{'
+    format: '[{asctime}] [{process}] [{threadName}] {log_color}[{levelname}]{reset} {name} - {message}'
+    datefmt: '%Y-%m-%d %H:%M:%S.%f%z'
+    reset: false
+
+handlers:
+  noop:
+    class: logging.NullHandler
+
+  console:
+    class: logging.StreamHandler
+    formatter: simple
+
+# Configure the root logger
+root:
+  level: WARNING
+  handlers:
+    - console
+
+loggers:
+  shm:
+    level: INFO
+
+  pyecobee.utilities:
+    level: FATAL

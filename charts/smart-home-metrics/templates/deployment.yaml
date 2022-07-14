@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "smartthings-metrics.fullname" . }}
+  name: {{ include "smart-home-metrics.fullname" . }}
   labels:
-    {{- include "smartthings-metrics.labels" . | nindent 4 }}
+    {{- include "smart-home-metrics.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "smartthings-metrics.selectorLabels" . | nindent 6 }}
+      {{- include "smart-home-metrics.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -16,7 +16,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "smartthings-metrics.selectorLabels" . | nindent 8 }}
+        {{- include "smart-home-metrics.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -46,7 +46,7 @@ spec:
             initialDelaySeconds: 5
           envFrom:
             - secretRef:
-                name: {{ include "smartthings-metrics.fullname" . }}
+                name: {{ include "smart-home-metrics.fullname" . }}
                 optional: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "smartthings-metrics.name" -}}
+{{- define "smart-home-metrics.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "smartthings-metrics.fullname" -}}
+{{- define "smart-home-metrics.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -26,16 +26,16 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "smartthings-metrics.chart" -}}
+{{- define "smart-home-metrics.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "smartthings-metrics.labels" -}}
-helm.sh/chart: {{ include "smartthings-metrics.chart" . }}
-{{ include "smartthings-metrics.selectorLabels" . }}
+{{- define "smart-home-metrics.labels" -}}
+helm.sh/chart: {{ include "smart-home-metrics.chart" . }}
+{{ include "smart-home-metrics.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -45,7 +45,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "smartthings-metrics.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "smartthings-metrics.name" . }}
+{{- define "smart-home-metrics.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "smart-home-metrics.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "smartthings-metrics.fullname" . }}
+  name: {{ include "smart-home-metrics.fullname" . }}
   labels:
-    {{- include "smartthings-metrics.labels" . | nindent 4 }}
+    {{- include "smart-home-metrics.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: http-metrics
   selector:
-    {{- include "smartthings-metrics.selectorLabels" . | nindent 4 }}
+    {{- include "smart-home-metrics.selectorLabels" . | nindent 4 }}
