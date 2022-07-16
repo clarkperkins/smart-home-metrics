@@ -30,6 +30,6 @@ async def collect_metrics(registry: CollectorRegistry = REGISTRY):
         logger.info("Finished initializing collectors")
 
         while True:
-            collect_coros = [c.collect_metrics() for c in collectors]
+            collect_coros = [c.perform_collection() for c in collectors]
             await asyncio.gather(*collect_coros)
             await asyncio.sleep(60)
