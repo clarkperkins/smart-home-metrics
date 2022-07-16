@@ -1,9 +1,12 @@
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from functools import lru_cache
 
 from aiohttp import ClientSession
 from prometheus_client import CollectorRegistry, Enum, Gauge
+
+logger = logging.getLogger(__name__)
 
 
 class MetricCollector(ABC):
@@ -40,6 +43,17 @@ class MetricCollector(ABC):
         """
         Perform any initialization logic
         """
+
+    async def perform_collection(self):
+        """
+        Called to perform metric collection.
+        Just a wrapper around the collect_metrics() method to catch any exceptions.
+        You shouldn't need to override this method in most cases.
+        """
+        try:
+            await self.collect_metrics()
+        except Exception as exc:
+            logger.warning("Metric collection failed", exc_info=exc)
 
     @abstractmethod
     async def collect_metrics(self):
