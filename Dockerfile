@@ -5,7 +5,7 @@ WORKDIR /app
 #COPY docker/install_build.sh /app/
 #RUN sh install_build.sh
 
-COPY pyproject.toml poetry.lock /app/
+COPY pyproject.toml poetry.lock logging.yaml /app/
 
 COPY shm shm
 
