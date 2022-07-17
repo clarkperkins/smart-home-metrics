@@ -1,5 +1,5 @@
 version: 1
-disable_existing_loggers: false
+disable_existing_loggers: true
 
 formatters:
   simple:
@@ -9,6 +9,11 @@ formatters:
     datefmt: '%Y-%m-%d %H:%M:%S.%f%z'
     reset: false
 
+  access:
+    (): uvicorn.logging.AccessFormatter
+    style: '{'
+    fmt: '{client_addr} - "{request_line}" {status_code}'
+
 handlers:
   noop:
     class: logging.NullHandler
@@ -16,6 +21,10 @@ handlers:
   console:
     class: logging.StreamHandler
     formatter: simple
+
+  access:
+    class: logging.StreamHandler
+    formatter: access
 
 # Configure the root logger
 root:
@@ -26,6 +35,15 @@ root:
 loggers:
   shm:
     level: INFO
+
+  uvicorn:
+    level: INFO
+
+  uvicorn.access:
+    level: INFO
+    propagate: false
+    handlers:
+      - access
 
   pyecobee.utilities:
     level: FATAL
