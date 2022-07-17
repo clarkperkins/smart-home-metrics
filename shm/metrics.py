@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import threading
 
 from aiohttp import ClientSession
-from prometheus_client import REGISTRY, CollectorRegistry
+from prometheus_client import REGISTRY, CollectorRegistry, make_asgi_app
+from uvicorn import Config, Server
 
 from shm.collectors import MetricCollector
 from shm.collectors.ecobee import EcobeeMetricCollector
@@ -14,22 +16,52 @@ ECOBEE_ENABLED = False
 ST_ENABLED = True
 
 
-async def collect_metrics(registry: CollectorRegistry = REGISTRY):
-    async with ClientSession() as session:
-        collectors: list[MetricCollector] = []
+class Collector:
+    def __init__(self, host: str, port: int, registry: CollectorRegistry = REGISTRY):
+        self.registry = registry
+        self.server = self.make_prometheus_server(host, port)
 
-        if ST_ENABLED:
-            collectors.append(SmartThingsMetricCollector(registry, session))
+    @staticmethod
+    def make_prometheus_server(host: str, port: int):
+        app = make_asgi_app()
+        config = Config(app, host=host, port=port, log_config=None)
+        return Server(config=config)
 
-        if ECOBEE_ENABLED:
-            collectors.append(EcobeeMetricCollector(registry, session))
+    async def main_loop(self):
+        async with ClientSession() as session:
+            collectors: list[MetricCollector] = []
 
-        # initialize them all
-        await asyncio.gather(*[c.initialize() for c in collectors])
+            if ST_ENABLED:
+                collectors.append(SmartThingsMetricCollector(self.registry, session))
 
-        logger.info("Finished initializing collectors")
+            if ECOBEE_ENABLED:
+                collectors.append(EcobeeMetricCollector(self.registry, session))
 
-        while True:
-            collect_coros = [c.perform_collection() for c in collectors]
-            await asyncio.gather(*collect_coros)
-            await asyncio.sleep(60)
+            # initialize them all
+            await asyncio.gather(*[c.initialize() for c in collectors])
+
+            logger.info("Finished initializing collectors")
+
+            counter = 0
+
+            while not self.server.should_exit:
+                if counter == 0:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "Active threads: %s",
+                            ", ".join(t.name for t in threading.enumerate()),
+                        )
+                    collect_coros = [c.perform_collection() for c in collectors]
+                    await asyncio.gather(*collect_coros)
+
+                counter += 1
+                counter %= 60
+                await asyncio.sleep(1)
+
+            logger.info("Metrics collection shut down")
+
+    async def run(self):
+        await asyncio.gather(
+            self.server.serve(),
+            self.main_loop(),
+        )

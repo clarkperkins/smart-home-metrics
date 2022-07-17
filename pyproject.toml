@@ -18,6 +18,7 @@ prometheus-client = "*"
 pyecobee = "*"
 pysmartthings = "*"
 pyyaml = "*"
+uvicorn = "*"
 
 [tool.poetry.dev-dependencies]
 black = "*"
@@ -73,5 +74,6 @@ skip_gitignore = true
 module = [
     "pyecobee",
     "pysmartthings",
+    "uvicorn",
 ]
 ignore_missing_imports = true
