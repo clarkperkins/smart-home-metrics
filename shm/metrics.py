@@ -44,6 +44,7 @@ class Collector:
 
             counter = 0
 
+            # rely on the server signal handler to set should_exit
             while not self.server.should_exit:
                 if counter == 0:
                     if logger.isEnabledFor(logging.DEBUG):

@@ -40,7 +40,8 @@ loggers:
     level: INFO
 
   uvicorn.access:
-    level: INFO
+    # set level to INFO to enable access logs
+    level: WARNING
     propagate: false
     handlers:
       - access
