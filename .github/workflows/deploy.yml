@@ -25,7 +25,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install Build Dependencies
         run: |
@@ -58,6 +58,8 @@ jobs:
           push: true
           tags: ${{ needs.build.outputs.image-tags }}
           labels: ${{ needs.build.outputs.image-labels }}
+          cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache
+          cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache,mode=max
 
   helm:
     name: Helm Build & Push

@@ -36,12 +36,12 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /
+              path: /metrics
               port: http-metrics
             initialDelaySeconds: 5
           readinessProbe:
             httpGet:
-              path: /
+              path: /metrics
               port: http-metrics
             initialDelaySeconds: 5
           envFrom:

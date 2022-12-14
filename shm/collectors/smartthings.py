@@ -5,13 +5,18 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from aiohttp import ClientSession
-from prometheus_client import CollectorRegistry
-from prometheus_client.metrics import T
+from prometheus_client import Metric
 from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
 
 from shm.collectors import MetricCollector
 
 logger = logging.getLogger(__name__)
+
+
+EXCLUDED_DEVICE_NAMES = [
+    "v4 - ecobee Thermostat - Heat and Cool (F)",
+    "ecobee Sensor",
+]
 
 
 class SmartThingsMetricCollector(MetricCollector):
@@ -28,9 +33,10 @@ class SmartThingsMetricCollector(MetricCollector):
         "device_type_name",
         "device_type_network",
     ]
+    default_documentation = "SmartThings Device"
 
-    def __init__(self, registry: CollectorRegistry, session: ClientSession):
-        super().__init__(registry, session)
+    def __init__(self, session: ClientSession):
+        super().__init__(session)
 
         token = os.environ.get("SMARTTHINGS_TOKEN")
 
@@ -39,9 +45,7 @@ class SmartThingsMetricCollector(MetricCollector):
 
         self.api = SmartThings(session, token)
 
-    async def lookup_locations(
-        self,
-    ) -> dict[str, LocationEntity]:
+    async def lookup_locations(self) -> dict[str, LocationEntity]:
         locations = await self.api.locations()
 
         location_lookup = {}
@@ -65,7 +69,7 @@ class SmartThingsMetricCollector(MetricCollector):
 
         return room_lookup
 
-    async def collect_metrics(self):
+    async def collect_metrics(self) -> Iterable[Metric]:
         logger.debug("Collecting smartthings metrics...")
 
         devices = await self.api.devices()
@@ -73,10 +77,19 @@ class SmartThingsMetricCollector(MetricCollector):
         rooms = await self.lookup_rooms(locations.values())
 
         device_metrics = [
-            DeviceMetric(self, self.api, d, locations, rooms) for d in devices
+            DeviceMetric(self, self.api, d, locations, rooms)
+            for d in devices
+            if d.name not in EXCLUDED_DEVICE_NAMES
         ]
 
-        await asyncio.gather(*[d.update_metrics() for d in device_metrics])
+        metric_lists = await asyncio.gather(*[d.get_metrics() for d in device_metrics])
+
+        metrics: list[Metric] = []
+
+        for metric_list in metric_lists:
+            metrics.extend(metric_list)
+
+        return metrics
 
 
 class DeviceMetric:
@@ -111,24 +124,29 @@ class DeviceMetric:
         self.location = locations.get(device.location_id)
         self.room = rooms.get(device.location_id, {}).get(device.room_id)
 
-    def add_labels(self, metric: T) -> T:
-        return metric.labels(
-            device_id=self.device.device_id,
-            device_name=self.device.name,
-            device_label=self.device.label,
-            location_id=self.device.location_id,
-            location_name=self.location.name if self.location else None,
-            room_id=self.device.room_id,
-            room_name=self.room.name if self.room else None,
-            type=self.device.type,
-            device_type_id=self.device.device_type_id,
-            device_type_name=self.device.device_type_name,
-            device_type_network=self.device.device_type_network,
-        )
+    def get_labels(self) -> list[str]:
+        # Must match the order defined on the collector above
+        return [
+            self.device.device_id or "",
+            self.device.name or "",
+            self.device.label or "",
+            self.device.location_id or "",
+            self.location.name if self.location else None or "",
+            self.device.room_id or "",
+            self.room.name if self.room else None or "",
+            self.device.type or "",
+            self.device.device_type_id or "",
+            self.device.device_type_name or "",
+            self.device.device_type_network or "",
+        ]
 
-    async def update_metrics(self):
+    async def get_metrics(self) -> Iterable[Metric]:
         status = await self.api._service.get_device_status(self.device.device_id)
         components = status.get("components", {})
+
+        metrics: list[Metric] = []
+
+        labels = self.get_labels()
 
         for component, capabilities in components.items():
             for capability, attributes in capabilities.items():
@@ -143,45 +161,52 @@ class DeviceMetric:
 
                     if isinstance(value, (int, float)):
                         unit = data.get("unit")
-                        if unit:
-                            key = f"{key}_{unit}".replace("%", "pct")
-                        g = self.add_labels(self.collector.get_gauge(key))
-                        g.set(value)
+                        if unit == "%":
+                            unit = "pct"
+
+                        g = self.collector.get_gauge(key, unit=unit)
+                        g.add_metric(labels, value)
+                        metrics.append(g)
                     elif attribute in self.enums:
                         if value:
-                            e = self.add_labels(
-                                self.collector.get_enum(key, self.enums[attribute])
+                            e = self.collector.get_enum(key)
+                            e.add_metric(
+                                labels,
+                                {
+                                    state: state == value
+                                    for state in self.enums[attribute]
+                                },
                             )
-                            e.state(value)
+                            metrics.append(e)
                     elif attribute == "threeAxis":
-                        self.add_labels(self.collector.get_gauge(f"{key}_x")).set(
-                            value[0]
-                        )
-                        self.add_labels(self.collector.get_gauge(f"{key}_y")).set(
-                            value[1]
-                        )
-                        self.add_labels(self.collector.get_gauge(f"{key}_z")).set(
-                            value[2]
-                        )
+                        x = self.collector.get_gauge(key, unit="x")
+                        y = self.collector.get_gauge(key, unit="y")
+                        z = self.collector.get_gauge(key, unit="z")
+
+                        x.add_metric(labels, value[0])
+                        y.add_metric(labels, value[1])
+                        z.add_metric(labels, value[2])
+
+                        metrics.append(x)
+                        metrics.append(y)
+                        metrics.append(z)
                     elif attribute == "thermostatFanMode":
                         if value:
                             modes = attributes["supportedThermostatFanModes"]["value"]
-                            e = self.add_labels(
-                                self.collector.get_enum(
-                                    key,
-                                    tuple(modes),
-                                )
+                            e = self.collector.get_enum(key)
+                            e.add_metric(
+                                labels, {mode: mode == value for mode in modes}
                             )
-                            e.state(value)
+                            metrics.append(e)
                     elif attribute == "thermostatMode":
                         if value:
                             modes = attributes["supportedThermostatModes"]["value"]
-                            e = self.add_labels(
-                                self.collector.get_enum(
-                                    key,
-                                    tuple(modes),
-                                )
+                            e = self.collector.get_enum(key)
+                            e.add_metric(
+                                labels, {mode: mode == value for mode in modes}
                             )
-                            e.state(value)
+                            metrics.append(e)
                     # else:
                     #     print(f"{key} = {data}")
+
+        return metrics
