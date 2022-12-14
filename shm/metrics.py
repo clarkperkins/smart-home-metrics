@@ -1,10 +1,10 @@
 import asyncio
 import logging
-import threading
+from collections.abc import Iterable
 
 from aiohttp import ClientSession
-from prometheus_client import REGISTRY, CollectorRegistry, make_asgi_app
-from uvicorn import Config, Server
+from prometheus_client import Metric
+from prometheus_client.registry import Collector
 
 from shm.collectors import MetricCollector
 from shm.collectors.ecobee import EcobeeMetricCollector
@@ -16,53 +16,35 @@ ECOBEE_ENABLED = False
 ST_ENABLED = True
 
 
-class Collector:
-    def __init__(self, host: str, port: int, registry: CollectorRegistry = REGISTRY):
-        self.registry = registry
-        self.server = self.make_prometheus_server(host, port)
+class SmartHomeCollector(Collector):
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.collectors: list[MetricCollector] = []
+        self.session: ClientSession | None = None
+        self.loop.run_until_complete(self.setup_collectors())
 
-    @staticmethod
-    def make_prometheus_server(host: str, port: int):
-        app = make_asgi_app()
-        config = Config(app, host=host, port=port, log_config=None)
-        return Server(config=config)
+    async def setup_collectors(self):
+        self.session = ClientSession(loop=self.loop)
+        if ST_ENABLED:
+            self.collectors.append(SmartThingsMetricCollector(self.session))
 
-    async def main_loop(self):
-        async with ClientSession() as session:
-            collectors: list[MetricCollector] = []
+        if ECOBEE_ENABLED:
+            self.collectors.append(EcobeeMetricCollector(self.session))
 
-            if ST_ENABLED:
-                collectors.append(SmartThingsMetricCollector(self.registry, session))
+        # initialize them all
+        await asyncio.gather(*[c.initialize() for c in self.collectors])
+        logger.info("Finished initializing collectors")
 
-            if ECOBEE_ENABLED:
-                collectors.append(EcobeeMetricCollector(self.registry, session))
+    def collect(self) -> Iterable[Metric]:
+        return self.loop.run_until_complete(self.do_collect())
 
-            # initialize them all
-            await asyncio.gather(*[c.initialize() for c in collectors])
+    async def do_collect(self) -> Iterable[Metric]:
+        collect_coros = [c.perform_collection() for c in self.collectors]
+        all_metric_iterables = await asyncio.gather(*collect_coros)
 
-            logger.info("Finished initializing collectors")
+        all_metrics: list[Metric] = []
 
-            counter = 0
+        for metric_iterable in all_metric_iterables:
+            all_metrics.extend(metric_iterable)
 
-            # rely on the server signal handler to set should_exit
-            while not self.server.should_exit:
-                if counter == 0:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            "Active threads: %s",
-                            ", ".join(t.name for t in threading.enumerate()),
-                        )
-                    collect_coros = [c.perform_collection() for c in collectors]
-                    await asyncio.gather(*collect_coros)
-
-                counter += 1
-                counter %= 60
-                await asyncio.sleep(1)
-
-            logger.info("Metrics collection shut down")
-
-    async def run(self):
-        await asyncio.gather(
-            self.server.serve(),
-            self.main_loop(),
-        )
+        return all_metrics

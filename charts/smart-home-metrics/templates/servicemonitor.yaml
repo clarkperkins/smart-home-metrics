@@ -15,7 +15,7 @@ spec:
       {{- include "smart-home-metrics.selectorLabels" . | nindent 6 }}
   endpoints:
     - targetPort: 9000
-      path: /
+      path: /metrics
       interval: {{ .Values.prometheus.servicemonitor.interval }}
       scrapeTimeout: {{ .Values.prometheus.servicemonitor.scrapeTimeout }}
       honorLabels: {{ .Values.prometheus.servicemonitor.honorLabels }}
