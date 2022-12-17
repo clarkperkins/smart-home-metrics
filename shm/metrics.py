@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import Iterable
 
+import anyio
 from aiohttp import ClientSession
 from prometheus_client import Metric
 from prometheus_client.registry import Collector
@@ -17,14 +18,12 @@ ST_ENABLED = True
 
 
 class SmartHomeCollector(Collector):
-    def __init__(self):
-        self.loop = asyncio.new_event_loop()
+    def __init__(self) -> None:
         self.collectors: list[MetricCollector] = []
-        self.session: ClientSession | None = None
-        self.loop.run_until_complete(self.setup_collectors())
+        self.session = ClientSession()
 
     async def setup_collectors(self):
-        self.session = ClientSession(loop=self.loop)
+        logger.info("Initializing collectors")
         if ST_ENABLED:
             self.collectors.append(SmartThingsMetricCollector(self.session))
 
@@ -35,8 +34,15 @@ class SmartHomeCollector(Collector):
         await asyncio.gather(*[c.initialize() for c in self.collectors])
         logger.info("Finished initializing collectors")
 
+    def describe(self) -> Iterable[Metric]:
+        """
+        Don't particularly care about name clashing, just do them all here
+        :return:
+        """
+        return []
+
     def collect(self) -> Iterable[Metric]:
-        return self.loop.run_until_complete(self.do_collect())
+        return anyio.from_thread.run(self.do_collect)
 
     async def do_collect(self) -> Iterable[Metric]:
         collect_coros = [c.perform_collection() for c in self.collectors]

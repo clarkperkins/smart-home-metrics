@@ -40,4 +40,4 @@ ENV PATH $VIRTUAL_ENV/bin:$PATH
 
 USER shm
 
-CMD ["gunicorn", "shm.wsgi:app", "-b", "0.0.0.0:9000"]
+CMD ["uvicorn", "--log-config", "logging.yaml", "--host", "0.0.0.0", "--port", "9000", "shm.main:app"]
