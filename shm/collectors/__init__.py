@@ -14,7 +14,9 @@ class MetricCollector(ABC):
     default_documentation: str
 
     def __init__(self, session: ClientSession):
+        self._check_labels()
         self.session = session
+        self.metrics: dict[str, Metric] = {}
 
     def _check_labels(self):
         if self.label_names is None:
@@ -23,25 +25,42 @@ class MetricCollector(ABC):
     def get_gauge(
         self, key: str, unit: str = "", documentation: str | None = None
     ) -> GaugeMetricFamily:
-        self._check_labels()
-        return GaugeMetricFamily(
-            key,
-            documentation or self.default_documentation,
-            labels=self.label_names,
-            unit=unit,
-        )
+        cache_key = f"{key}_{unit}" if unit else key
+        if cache_key in self.metrics:
+            metric = self.metrics[cache_key]
+            if isinstance(metric, GaugeMetricFamily):
+                return metric
+            else:
+                raise ValueError(f"Metric {key} already added as a {type(metric)}")
+        else:
+            new = GaugeMetricFamily(
+                key,
+                documentation or self.default_documentation,
+                labels=self.label_names,
+                unit=unit,
+            )
+            self.metrics[cache_key] = new
+            return new
 
     def get_enum(
         self, key: str, documentation: str | None = None
     ) -> StateSetMetricFamily:
-        self._check_labels()
-        return StateSetMetricFamily(
-            key,
-            documentation or self.default_documentation,
-            labels=self.label_names,
-        )
+        if key in self.metrics:
+            metric = self.metrics[key]
+            if isinstance(metric, StateSetMetricFamily):
+                return metric
+            else:
+                raise ValueError(f"Metric {key} already added as a {type(metric)}")
+        else:
+            new = StateSetMetricFamily(
+                key,
+                documentation or self.default_documentation,
+                labels=self.label_names,
+            )
+            self.metrics[key] = new
+            return new
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """
         Perform any initialization logic
         """
@@ -53,13 +72,21 @@ class MetricCollector(ABC):
         You shouldn't need to override this method in most cases.
         """
         try:
-            return await self.collect_metrics()
+            self.metrics = {}
+
+            await self.collect_metrics()
+
+            metrics = map(lambda x: x[1], sorted(self.metrics.items()))
+
+            self.metrics = {}
+
+            return metrics
         except Exception as exc:
             logger.warning("Metric collection failed", exc_info=exc)
             return []
 
     @abstractmethod
-    async def collect_metrics(self) -> Iterable[Metric]:
+    async def collect_metrics(self):
         """
         Perform metric collection. Will be called once per minute.
         """

@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "smart-home-metrics.fullname" . }}
+  labels:
+    {{- include "smart-home-metrics.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "smart-home-metrics.fullname" . }}
+roleRef:
+  kind: Role
+  name: {{ include "smart-home-metrics.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io

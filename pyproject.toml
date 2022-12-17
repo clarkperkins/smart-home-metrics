@@ -13,12 +13,15 @@ authors = ["Clark Perkins <r.clark.perkins@gmail.com>"]
 python = "^3.11"
 
 colorlog = "*"
-gunicorn = "*"
+fastapi = "*"
+kubernetes = "*"
 prometheus-client = "*"
+prometheus-fastapi-instrumentator = "*"
 pydantic = "*"
 pyecobee = "*"
 pysmartthings = "*"
 pyyaml = "*"
+uvicorn = "*"
 
 [tool.poetry.dev-dependencies]
 black = "*"
@@ -30,9 +33,6 @@ pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-mock = "*"
 types-pyyaml = "*"
-
-[tool.poetry.scripts]
-shm = 'shm.cli:main'
 
 
 [tool.coverage.run]

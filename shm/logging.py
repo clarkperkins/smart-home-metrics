@@ -1,24 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import logging.config
 from datetime import datetime
 from logging import LogRecord
-from pathlib import Path
 from typing import Optional
 
-import yaml
 from colorlog import ColoredFormatter
 
 _MSEC_FORMAT = "%s,%03d"
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-def setup_logging():
-    logging_config_file = BASE_DIR / "logging.yaml"
-    if logging_config_file.is_file():
-        with logging_config_file.open("rt", encoding="utf8") as f:
-            logging.config.dictConfig(yaml.safe_load(f))
 
 
 class HighlightingFormatter(ColoredFormatter):

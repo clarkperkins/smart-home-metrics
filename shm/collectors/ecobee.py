@@ -3,7 +3,7 @@ import functools
 import logging
 import os
 from asyncio import Future
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,7 +12,6 @@ from typing import Optional, TypeVar
 from zoneinfo import ZoneInfo
 
 from aiohttp import ClientSession
-from prometheus_client import Metric
 from pydantic import BaseModel
 from pyecobee import (
     EcobeeAuthorizationException,
@@ -176,12 +175,12 @@ class EcobeeMetricCollector(MetricCollector):
         self._revisions: dict[str, Revisions] = {}
         self._cache: dict[str, Thermostat] = {}
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         await self.ecobee.initialize_tokens()
 
-    async def collect_metrics(self) -> Iterable[Metric]:
+    async def collect_metrics(self) -> None:
         if not await self.ecobee.ensure_tokens():
-            return []
+            return
 
         actual_temp = self.get_gauge("ecobee_actual_temperature", unit="f")
         raw_temp = self.get_gauge("ecobee_raw_temperature", unit="f")
@@ -317,18 +316,3 @@ class EcobeeMetricCollector(MetricCollector):
                         )
                     elif capability.type == "humidity":
                         sensor_humidity.add_metric(sensor_labels, int(capability.value))
-
-        metrics = [
-            actual_temp,
-            raw_temp,
-            actual_humid,
-            desired_heat,
-            desired_cool,
-            actual_voc,
-            actual_co2,
-            sensor_temp,
-            sensor_occupancy,
-            sensor_humidity,
-        ]
-
-        return metrics

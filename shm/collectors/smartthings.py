@@ -5,7 +5,6 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from aiohttp import ClientSession
-from prometheus_client import Metric
 from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
 
 from shm.collectors import MetricCollector
@@ -69,7 +68,7 @@ class SmartThingsMetricCollector(MetricCollector):
 
         return room_lookup
 
-    async def collect_metrics(self) -> Iterable[Metric]:
+    async def collect_metrics(self):
         logger.debug("Collecting smartthings metrics...")
 
         devices = await self.api.devices()
@@ -82,14 +81,7 @@ class SmartThingsMetricCollector(MetricCollector):
             if d.name not in EXCLUDED_DEVICE_NAMES
         ]
 
-        metric_lists = await asyncio.gather(*[d.get_metrics() for d in device_metrics])
-
-        metrics: list[Metric] = []
-
-        for metric_list in metric_lists:
-            metrics.extend(metric_list)
-
-        return metrics
+        await asyncio.gather(*[d.get_metrics() for d in device_metrics])
 
 
 class DeviceMetric:
@@ -140,11 +132,9 @@ class DeviceMetric:
             self.device.device_type_network or "",
         ]
 
-    async def get_metrics(self) -> Iterable[Metric]:
+    async def get_metrics(self) -> None:
         status = await self.api._service.get_device_status(self.device.device_id)
         components = status.get("components", {})
-
-        metrics: list[Metric] = []
 
         labels = self.get_labels()
 
@@ -164,9 +154,9 @@ class DeviceMetric:
                         if unit == "%":
                             unit = "pct"
 
-                        g = self.collector.get_gauge(key, unit=unit)
-                        g.add_metric(labels, value)
-                        metrics.append(g)
+                        self.collector.get_gauge(key, unit=unit).add_metric(
+                            labels, value
+                        )
                     elif attribute in self.enums:
                         if value:
                             e = self.collector.get_enum(key)
@@ -177,19 +167,16 @@ class DeviceMetric:
                                     for state in self.enums[attribute]
                                 },
                             )
-                            metrics.append(e)
                     elif attribute == "threeAxis":
-                        x = self.collector.get_gauge(key, unit="x")
-                        y = self.collector.get_gauge(key, unit="y")
-                        z = self.collector.get_gauge(key, unit="z")
-
-                        x.add_metric(labels, value[0])
-                        y.add_metric(labels, value[1])
-                        z.add_metric(labels, value[2])
-
-                        metrics.append(x)
-                        metrics.append(y)
-                        metrics.append(z)
+                        self.collector.get_gauge(key, unit="x").add_metric(
+                            labels, value[0]
+                        )
+                        self.collector.get_gauge(key, unit="y").add_metric(
+                            labels, value[1]
+                        )
+                        self.collector.get_gauge(key, unit="z").add_metric(
+                            labels, value[2]
+                        )
                     elif attribute == "thermostatFanMode":
                         if value:
                             modes = attributes["supportedThermostatFanModes"]["value"]
@@ -197,7 +184,6 @@ class DeviceMetric:
                             e.add_metric(
                                 labels, {mode: mode == value for mode in modes}
                             )
-                            metrics.append(e)
                     elif attribute == "thermostatMode":
                         if value:
                             modes = attributes["supportedThermostatModes"]["value"]
@@ -205,8 +191,5 @@ class DeviceMetric:
                             e.add_metric(
                                 labels, {mode: mode == value for mode in modes}
                             )
-                            metrics.append(e)
                     # else:
                     #     print(f"{key} = {data}")
-
-        return metrics
