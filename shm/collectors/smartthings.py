@@ -1,10 +1,10 @@
-import asyncio
 import logging
-import os
 from collections import defaultdict
 from collections.abc import Iterable
 
+import anyio
 from aiohttp import ClientSession
+from pydantic import BaseSettings
 from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
 
 from shm.collectors import MetricCollector
@@ -16,6 +16,13 @@ EXCLUDED_DEVICE_NAMES = [
     "v4 - ecobee Thermostat - Heat and Cool (F)",
     "ecobee Sensor",
 ]
+
+
+class SmartThingsConfig(BaseSettings):
+    token: str
+
+    class Config:
+        env_prefix = "SMARTTHINGS_"
 
 
 class SmartThingsMetricCollector(MetricCollector):
@@ -37,12 +44,9 @@ class SmartThingsMetricCollector(MetricCollector):
     def __init__(self, session: ClientSession):
         super().__init__(session)
 
-        token = os.environ.get("SMARTTHINGS_TOKEN")
+        self.config = SmartThingsConfig()
 
-        if not token:
-            raise EnvironmentError("Missing SMARTTHINGS_TOKEN env var")
-
-        self.api = SmartThings(session, token)
+        self.api = SmartThings(session, self.config.token)
 
     async def lookup_locations(self) -> dict[str, LocationEntity]:
         locations = await self.api.locations()
@@ -57,14 +61,18 @@ class SmartThingsMetricCollector(MetricCollector):
     async def lookup_rooms(
         locations: Iterable[LocationEntity],
     ) -> dict[str, dict[str, RoomEntity]]:
-        room_coros = [location.rooms() for location in locations]
+        rooms: list[RoomEntity] = []
 
-        location_rooms = await asyncio.gather(*room_coros)
+        async def _save_room(loc: LocationEntity):
+            rooms.extend(await loc.rooms())
+
+        async with anyio.create_task_group() as group:
+            for location in locations:
+                group.start_soon(_save_room, location)
 
         room_lookup: dict[str, dict[str, RoomEntity]] = defaultdict(dict)
-        for rooms in location_rooms:
-            for room in rooms:
-                room_lookup[room.location_id][room.room_id] = room
+        for room in rooms:
+            room_lookup[room.location_id][room.room_id] = room
 
         return room_lookup
 
@@ -81,7 +89,9 @@ class SmartThingsMetricCollector(MetricCollector):
             if d.name not in EXCLUDED_DEVICE_NAMES
         ]
 
-        await asyncio.gather(*[d.get_metrics() for d in device_metrics])
+        async with anyio.create_task_group() as group:
+            for d in device_metrics:
+                group.start_soon(d.get_metrics)
 
 
 class DeviceMetric:
@@ -132,7 +142,7 @@ class DeviceMetric:
             self.device.device_type_network or "",
         ]
 
-    async def get_metrics(self) -> None:
+    async def get_metrics(self):
         status = await self.api._service.get_device_status(self.device.device_id)
         components = status.get("components", {})
 

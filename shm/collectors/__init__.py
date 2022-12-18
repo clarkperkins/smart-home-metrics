@@ -60,7 +60,7 @@ class MetricCollector(ABC):
             self.metrics[key] = new
             return new
 
-    async def initialize(self) -> None:
+    async def initialize(self):
         """
         Perform any initialization logic
         """

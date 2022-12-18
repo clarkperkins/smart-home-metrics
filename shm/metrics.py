@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import Iterable
 
@@ -13,12 +12,12 @@ from shm.collectors.smartthings import SmartThingsMetricCollector
 
 logger = logging.getLogger(__name__)
 
-ECOBEE_ENABLED = False
+ECOBEE_ENABLED = True
 ST_ENABLED = True
 
 
 class SmartHomeCollector(Collector):
-    def __init__(self) -> None:
+    def __init__(self):
         self.collectors: list[MetricCollector] = []
         self.session = ClientSession()
 
@@ -31,7 +30,10 @@ class SmartHomeCollector(Collector):
             self.collectors.append(EcobeeMetricCollector(self.session))
 
         # initialize them all
-        await asyncio.gather(*[c.initialize() for c in self.collectors])
+        async with anyio.create_task_group() as group:
+            for c in self.collectors:
+                group.start_soon(c.initialize)
+
         logger.info("Finished initializing collectors")
 
     def describe(self) -> Iterable[Metric]:
@@ -45,12 +47,13 @@ class SmartHomeCollector(Collector):
         return anyio.from_thread.run(self.do_collect)
 
     async def do_collect(self) -> Iterable[Metric]:
-        collect_coros = [c.perform_collection() for c in self.collectors]
-        all_metric_iterables = await asyncio.gather(*collect_coros)
-
         all_metrics: list[Metric] = []
 
-        for metric_iterable in all_metric_iterables:
-            all_metrics.extend(metric_iterable)
+        async def _collect(c: MetricCollector):
+            all_metrics.extend(await c.perform_collection())
+
+        async with anyio.create_task_group() as group:
+            for collector in self.collectors:
+                group.start_soon(_collect, collector)
 
         return all_metrics
