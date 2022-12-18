@@ -22,16 +22,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install Build Dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools
-          python -m pip install --upgrade poetry
-
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v2
 
@@ -45,15 +35,13 @@ jobs:
           username: clarkperkins
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set Library Version
-        run: |
-          poetry version ${{ needs.build.outputs.version }}
-
       - name: Docker Build and Push
         id: docker-build
         uses: docker/build-push-action@v3
         with:
           context: .
+          build-args: |
+            APP_VERSION=${{ needs.build.outputs.version }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ needs.build.outputs.image-tags }}

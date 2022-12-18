@@ -1,5 +1,7 @@
 FROM python:3.11-slim AS build
 
+ARG APP_VERSION="0.0.0"
+
 WORKDIR /app
 
 #COPY docker/install_build.sh /app/
@@ -18,6 +20,7 @@ COPY pyproject.toml poetry.lock logging.yaml /app/
 RUN poetry install --sync --without=dev --no-root
 
 COPY shm shm
+RUN poetry version $APP_VERSION
 RUN poetry install --sync --without=dev
 
 FROM python:3.11-slim AS shm
