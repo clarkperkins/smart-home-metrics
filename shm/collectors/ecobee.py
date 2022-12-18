@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 import anyio
 from aiohttp import ClientSession
-from kubernetes_asyncio import config
 from kubernetes_asyncio.client import (
     ApiClient,
     ApiException,
@@ -88,8 +87,6 @@ class MetricsEcobeeService(EcobeeService):
             if tokens:
                 self.refresh_token = tokens.refresh_token
         elif self.config.token_store_type == "kubernetes":
-            await config.load_kube_config()
-
             async with ApiClient() as api:
                 core = CoreV1Api(api)
                 try:
@@ -139,8 +136,6 @@ class MetricsEcobeeService(EcobeeService):
 
             await save(tokens)
         elif self.config.token_store_type == "kubernetes":
-            await config.load_kube_config()
-
             async with ApiClient() as api:
                 core = CoreV1Api(api)
 
