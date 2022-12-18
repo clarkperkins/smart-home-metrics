@@ -12,9 +12,10 @@ authors = ["Clark Perkins <r.clark.perkins@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.11"
 
+anyio = "*"
 colorlog = "*"
 fastapi = "*"
-kubernetes = "*"
+kubernetes_asyncio = "*"
 prometheus-client = "*"
 prometheus-fastapi-instrumentator = "*"
 pydantic = "*"
@@ -69,9 +70,12 @@ output = "reports/coverage/coverage.xml"
 profile = "black"
 skip_gitignore = true
 
+[tool.mypy]
+check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = [
+    "kubernetes_asyncio.*",
     "pyecobee",
     "pysmartthings",
     "uvicorn",

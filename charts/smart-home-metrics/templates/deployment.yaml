@@ -45,6 +45,13 @@ spec:
               path: /health
               port: http-metrics
             initialDelaySeconds: 5
+          env:
+            - name: ECOBEE_TOKEN_STORE_TYPE
+              value: kubernetes
+            - name: ECOBEE_TOKEN_STORE_K8S_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: ECOBEE_TOKEN_STORE_K8S_SECRET_NAME
+              value: {{ include "smart-home-metrics.fullname" . }}-ecobee-tokens
           envFrom:
             - secretRef:
                 name: {{ include "smart-home-metrics.fullname" . }}

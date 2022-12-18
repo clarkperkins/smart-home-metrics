@@ -1,22 +1,27 @@
-import asyncio
+import base64
 import functools
 import logging
-import os
-from asyncio import Future
-from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, TypeVar
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
+import anyio
 from aiohttp import ClientSession
-from pydantic import BaseModel
+from kubernetes_asyncio import config
+from kubernetes_asyncio.client import (
+    ApiClient,
+    ApiException,
+    CoreV1Api,
+    V1ObjectMeta,
+    V1Secret,
+)
+from pydantic import BaseModel, BaseSettings
 from pyecobee import (
     EcobeeAuthorizationException,
     EcobeeService,
-    EcobeeThermostatResponse,
     RemoteSensor,
     RemoteSensorCapability,
     Runtime,
@@ -30,101 +35,186 @@ from shm.collectors import MetricCollector
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-CONFIG_FILE = BASE_DIR / "ecobee.json"
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 UTC = ZoneInfo("UTC")
 
 
+class EcobeeConfig(BaseSettings):
+    client_id: str
+    token_store_type: str = "file"
+    token_store_file_path: Path = BASE_DIR / "ecobee.json"
+    token_store_k8s_namespace: str | None = None
+    token_store_k8s_secret_name: str | None = None
+
+    class Config:
+        env_prefix = "ECOBEE_"
+
+
 class EcobeeTokens(BaseModel):
-    access_token: Optional[str] = None
-    access_token_expires_on: Optional[datetime] = None
-    refresh_token: Optional[str] = None
-    refresh_token_expires_on: Optional[datetime] = None
+    refresh_token: str | None = None
+
+
+def to_async(f: Callable[..., T]) -> Callable[..., Coroutine[Any, Any, T]]:
+    @functools.wraps(f)
+    async def inner(*args, **kwargs) -> T:
+        return await anyio.to_thread.run_sync(functools.partial(f, *args, **kwargs))
+
+    return inner
 
 
 class MetricsEcobeeService(EcobeeService):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.executor = ThreadPoolExecutor(
-            max_workers=5,
-            thread_name_prefix="ecobee",
-        )
-
-    @classmethod
-    def build(cls, client_id: str):
-        return cls(
-            "Thermostat",
-            client_id,
-            scope=Scope.SMART_READ,
-        )
+    def __init__(self, config: EcobeeConfig = EcobeeConfig()):
+        super().__init__("Thermostat", config.client_id, scope=Scope.SMART_READ)
+        self.config = config
 
     async def load_tokens(self):
-        # try local config first
-        def load() -> Optional[EcobeeTokens]:
-            if CONFIG_FILE.is_file():
-                return EcobeeTokens.parse_file(CONFIG_FILE)
-            else:
-                return None
+        if self.config.token_store_type == "file":
+            # try local config first
+            @to_async
+            def load() -> EcobeeTokens | None:
+                if self.config.token_store_file_path.is_file():
+                    logger.info(
+                        "Loading ecobee config from file: %s",
+                        self.config.token_store_file_path,
+                    )
+                    return EcobeeTokens.parse_file(self.config.token_store_file_path)
+                else:
+                    return None
 
-        config = await self.to_async(load)()
+            tokens = await load()
 
-        if config:
-            self.access_token = config.access_token
-            self.access_token_expires_on = config.access_token_expires_on
-            self.refresh_token = config.refresh_token
-            self.refresh_token_expires_on = config.refresh_token_expires_on
+            if tokens:
+                self.refresh_token = tokens.refresh_token
+        elif self.config.token_store_type == "kubernetes":
+            await config.load_kube_config()
+
+            async with ApiClient() as api:
+                core = CoreV1Api(api)
+                try:
+                    secret: V1Secret = await core.read_namespaced_secret(
+                        self.config.token_store_k8s_secret_name,
+                        self.config.token_store_k8s_namespace,
+                    )
+                    if secret.data:
+                        refresh_token_b64: str = secret.data.get("ecobee_refresh_token")
+
+                        if refresh_token_b64:
+                            self.refresh_token = base64.decodebytes(
+                                refresh_token_b64.encode("utf8")
+                            ).decode("utf8")
+                            logger.info(
+                                "Loaded refresh token from secret: %s",
+                                self.config.token_store_k8s_secret_name,
+                            )
+                except ApiException as e:
+                    if e.status == 404:
+                        logger.info(
+                            "Secret %s not found in namespace %s",
+                            self.config.token_store_k8s_secret_name,
+                            self.config.token_store_k8s_namespace,
+                        )
+                    else:
+                        raise e
+        else:
+            raise ValueError(
+                f"Invalid token store type: {self.config.token_store_type}"
+            )
 
     async def save_tokens(self):
-        config = EcobeeTokens(
-            access_token=self.access_token,
-            access_token_expires_on=self.access_token_expires_on,
-            refresh_token=self.refresh_token,
-            refresh_token_expires_on=self.refresh_token_expires_on,
-        )
+        if self.config.token_store_type == "file":
+            tokens = EcobeeTokens(
+                refresh_token=self.refresh_token,
+            )
 
-        def save(tokens: EcobeeTokens):
-            with CONFIG_FILE.open("wt") as f:
-                f.write(tokens.json())
+            @to_async
+            def save(t: EcobeeTokens):
+                logger.info(
+                    "Saving ecobee config to file: %s",
+                    self.config.token_store_file_path,
+                )
+                with self.config.token_store_file_path.open("wt") as f:
+                    f.write(t.json())
 
-        await self.to_async(save)(config)
+            await save(tokens)
+        elif self.config.token_store_type == "kubernetes":
+            await config.load_kube_config()
+
+            async with ApiClient() as api:
+                core = CoreV1Api(api)
+
+                try:
+                    secret: V1Secret = await core.read_namespaced_secret(
+                        self.config.token_store_k8s_secret_name,
+                        self.config.token_store_k8s_namespace,
+                    )
+                    if secret.data and "ecobee_refresh_token" in secret.data:
+                        del secret.data["ecobee_refresh_token"]
+                    secret.string_data = {
+                        "ecobee_refresh_token": self.refresh_token,
+                    }
+                    logger.info(
+                        "Updating secret %s with new refresh token",
+                        self.config.token_store_k8s_secret_name,
+                    )
+                    await core.replace_namespaced_secret(
+                        self.config.token_store_k8s_secret_name,
+                        self.config.token_store_k8s_namespace,
+                        secret,
+                    )
+                except ApiException as e:
+                    if e.status == 404:
+                        secret = V1Secret(
+                            metadata=V1ObjectMeta(
+                                namespace=self.config.token_store_k8s_namespace,
+                                name=self.config.token_store_k8s_secret_name,
+                            ),
+                            type="Opaque",
+                            string_data={
+                                "ecobee_refresh_token": self.refresh_token,
+                            },
+                        )
+                        logger.info(
+                            "Creating secret %s with new refresh token",
+                            self.config.token_store_k8s_secret_name,
+                        )
+                        await core.create_namespaced_secret(
+                            self.config.token_store_k8s_namespace,
+                            secret,
+                        )
+                    else:
+                        raise e
+        else:
+            raise ValueError(
+                f"Invalid token store type: {self.config.token_store_type}"
+            )
 
     async def initialize_tokens(self):
         await self.load_tokens()
 
-        if self.access_token is None:
+        if self.refresh_token is None:
             auth_response = await self.authorize_async()
             logger.info("Ecobee PIN code: %s", auth_response.ecobee_pin)
 
     async def ensure_tokens(self) -> bool:
         now_utc_plus_30 = datetime.now(UTC) + timedelta(seconds=30)
 
-        if self.access_token is None:
-            # no token yet, request one
+        if self.access_token is None and self.refresh_token is None:
+            # no tokens yet, request one
             try:
                 await self.request_tokens_async()
                 await self.save_tokens()
             except EcobeeAuthorizationException:
                 logger.warning("Waiting for code authorization...")
                 return False
-        elif self.access_token_expires_on < now_utc_plus_30:
+        elif (self.access_token is None) or (
+            self.access_token_expires_on < now_utc_plus_30
+        ):
             await self.refresh_tokens_async()
             await self.save_tokens()
 
         return True
-
-    def to_async(self, f: Callable[..., T]) -> Callable[..., Future[T]]:
-        @functools.wraps(f)
-        def inner(*args, **kwargs) -> Future[T]:
-            loop = asyncio.get_running_loop()
-            return loop.run_in_executor(
-                self.executor, functools.partial(f, *args, **kwargs)
-            )
-
-        return inner
 
     def __getattr__(self, item: str):
         async_suffix = "_async"
@@ -132,7 +222,7 @@ class MetricsEcobeeService(EcobeeService):
         if item.endswith(async_suffix):
             method_name = item.removesuffix(async_suffix)
             method = getattr(self, method_name)
-            return self.to_async(method)
+            return to_async(method)
         else:
             raise AttributeError()
 
@@ -166,19 +256,15 @@ class EcobeeMetricCollector(MetricCollector):
 
     def __init__(self, session: ClientSession):
         super().__init__(session)
-
-        client_id = os.environ.get("ECOBEE_CLIENT_ID")
-        if client_id is None:
-            raise EnvironmentError("Missing ECOBEE_CLIENT_ID env var")
-        self.ecobee = MetricsEcobeeService.build(client_id)
+        self.ecobee = MetricsEcobeeService()
 
         self._revisions: dict[str, Revisions] = {}
         self._cache: dict[str, Thermostat] = {}
 
-    async def initialize(self) -> None:
+    async def initialize(self):
         await self.ecobee.initialize_tokens()
 
-    async def collect_metrics(self) -> None:
+    async def collect_metrics(self):
         if not await self.ecobee.ensure_tokens():
             return
 
@@ -202,83 +288,90 @@ class EcobeeMetricCollector(MetricCollector):
 
         summary = await self.ecobee.request_thermostats_summary_async(selection)
 
-        thermostat_requests = []
+        new_thermostat_ids: set[str] = set()
+        thermostats: list[Thermostat] = []
 
-        for revision in summary.revision_list:
-            (
-                thermostat_id,
-                thermostat_name,
-                connected,
-                thermostat_revision,
-                alerts_revision,
-                runtime_revision,
-                internal_revision,
-            ) = revision.split(":")
+        async def _get_thermostat(s: Selection):
+            r = await self.ecobee.request_thermostats_async(s)
+            thermostats.append(r.thermostat_list[0])
 
-            new_revisions = Revisions(
-                thermostat_revision,
-                alerts_revision,
-                runtime_revision,
-                internal_revision,
-            )
+        async with anyio.create_task_group() as group:
+            for revision in summary.revision_list:
+                (
+                    thermostat_id,
+                    thermostat_name,
+                    connected,
+                    thermostat_revision,
+                    alerts_revision,
+                    runtime_revision,
+                    internal_revision,
+                ) = revision.split(":")
 
-            old_revisions = self._revisions.get(thermostat_id)
+                new_thermostat_ids.add(thermostat_id)
 
-            selection = Selection(
-                SelectionType.THERMOSTATS.value,
-                thermostat_id,
-                include_equipment_status=True,
-            )
-
-            should_request = False
-
-            # if old_revisions is None or old_revisions.thermostat != new_revisions.thermostat:
-            #     should_request = True
-            #     selection.include_settings = True
-            #     selection.include_program = True
-            #     selection.include_events = True
-            #     selection.include_device = True
-
-            # if old_revisions is None or old_revisions.alerts != new_revisions.alerts:
-            #     should_request = True
-            #     selection.include_alerts = True
-
-            if old_revisions is None or old_revisions.runtime != new_revisions.runtime:
-                should_request = True
-                selection.include_sensors = True
-
-            if (
-                old_revisions is None
-                or old_revisions.internal != new_revisions.internal
-            ):
-                should_request = True
-                selection.include_runtime = True
-
-            if should_request:
-                thermostat_requests.append(
-                    self.ecobee.request_thermostats_async(selection)
+                new_revisions = Revisions(
+                    thermostat_revision,
+                    alerts_revision,
+                    runtime_revision,
+                    internal_revision,
                 )
 
-            self._revisions[thermostat_id] = new_revisions
+                old_revisions = self._revisions.get(thermostat_id)
 
-        if thermostat_requests:
-            thermostats: Sequence[EcobeeThermostatResponse] = await asyncio.gather(
-                *thermostat_requests
-            )
+                selection = Selection(
+                    SelectionType.THERMOSTATS.value,
+                    thermostat_id,
+                    include_equipment_status=True,
+                )
 
-            for r in thermostats:
-                thermostat: Thermostat = r.thermostat_list[0]
+                should_request = False
 
-                old_thermostat = self._cache.get(thermostat.identifier)
+                if old_revisions:
+                    if old_revisions.thermostat != new_revisions.thermostat:
+                        should_request = True
+                        selection.include_settings = True
+                        selection.include_program = True
+                        selection.include_events = True
+                        selection.include_device = True
 
-                # Copy things over from the previous if we don't have new data
-                if old_thermostat is not None:
-                    if not thermostat.runtime:
-                        thermostat._runtime = old_thermostat.runtime
-                    if not thermostat.remote_sensors:
-                        thermostat._remote_sensors = old_thermostat.remote_sensors
+                    if old_revisions.alerts != new_revisions.alerts:
+                        should_request = True
+                        selection.include_alerts = True
 
-                self._cache[thermostat.identifier] = thermostat
+                    if old_revisions.runtime != new_revisions.runtime:
+                        should_request = True
+                        selection.include_sensors = True
+
+                    if old_revisions.internal != new_revisions.internal:
+                        should_request = True
+                        selection.include_runtime = True
+                else:
+                    should_request = True
+                    # just get everything
+                    selection.include_settings = True
+                    selection.include_program = True
+                    selection.include_events = True
+                    selection.include_device = True
+                    selection.include_alerts = True
+                    selection.include_sensors = True
+                    selection.include_runtime = True
+
+                if should_request:
+                    group.start_soon(_get_thermostat, selection)
+
+                self._revisions[thermostat_id] = new_revisions
+
+        for thermostat in thermostats:
+            old_thermostat = self._cache.get(thermostat.identifier)
+
+            # Copy things over from the previous if we don't have new data
+            if old_thermostat is not None:
+                if not thermostat.runtime:
+                    thermostat._runtime = old_thermostat.runtime
+                if not thermostat.remote_sensors:
+                    thermostat._remote_sensors = old_thermostat.remote_sensors
+
+            self._cache[thermostat.identifier] = thermostat
 
         for thermostat in self._cache.values():
             runtime: Runtime = thermostat.runtime
