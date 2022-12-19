@@ -17,6 +17,7 @@ from kubernetes_asyncio.client import (
     V1ObjectMeta,
     V1Secret,
 )
+from kubernetes_asyncio.config import load_incluster_config
 from pydantic import BaseModel, BaseSettings
 from pyecobee import (
     EcobeeAuthorizationException,
@@ -67,6 +68,10 @@ class MetricsEcobeeService(EcobeeService):
     def __init__(self, config: EcobeeConfig = EcobeeConfig()):
         super().__init__("Thermostat", config.client_id, scope=Scope.SMART_READ)
         self.config = config
+        self.k8s_api_client: ApiClient | None = None
+        if config.token_store_type == "kubernetes":
+            load_incluster_config()
+            self.k8s_api_client = ApiClient()
 
     async def load_tokens(self):
         if self.config.token_store_type == "file":
@@ -87,33 +92,32 @@ class MetricsEcobeeService(EcobeeService):
             if tokens:
                 self.refresh_token = tokens.refresh_token
         elif self.config.token_store_type == "kubernetes":
-            async with ApiClient() as api:
-                core = CoreV1Api(api)
-                try:
-                    secret: V1Secret = await core.read_namespaced_secret(
+            core = CoreV1Api(self.k8s_api_client)
+            try:
+                secret: V1Secret = await core.read_namespaced_secret(
+                    self.config.token_store_k8s_secret_name,
+                    self.config.token_store_k8s_namespace,
+                )
+                if secret.data:
+                    refresh_token_b64: str = secret.data.get("ecobee_refresh_token")
+
+                    if refresh_token_b64:
+                        self.refresh_token = base64.decodebytes(
+                            refresh_token_b64.encode("utf8")
+                        ).decode("utf8")
+                        logger.info(
+                            "Loaded refresh token from secret: %s",
+                            self.config.token_store_k8s_secret_name,
+                        )
+            except ApiException as e:
+                if e.status == 404:
+                    logger.info(
+                        "Secret %s not found in namespace %s",
                         self.config.token_store_k8s_secret_name,
                         self.config.token_store_k8s_namespace,
                     )
-                    if secret.data:
-                        refresh_token_b64: str = secret.data.get("ecobee_refresh_token")
-
-                        if refresh_token_b64:
-                            self.refresh_token = base64.decodebytes(
-                                refresh_token_b64.encode("utf8")
-                            ).decode("utf8")
-                            logger.info(
-                                "Loaded refresh token from secret: %s",
-                                self.config.token_store_k8s_secret_name,
-                            )
-                except ApiException as e:
-                    if e.status == 404:
-                        logger.info(
-                            "Secret %s not found in namespace %s",
-                            self.config.token_store_k8s_secret_name,
-                            self.config.token_store_k8s_namespace,
-                        )
-                    else:
-                        raise e
+                else:
+                    raise e
         else:
             raise ValueError(
                 f"Invalid token store type: {self.config.token_store_type}"
@@ -136,50 +140,49 @@ class MetricsEcobeeService(EcobeeService):
 
             await save(tokens)
         elif self.config.token_store_type == "kubernetes":
-            async with ApiClient() as api:
-                core = CoreV1Api(api)
+            core = CoreV1Api(self.k8s_api_client)
 
-                try:
-                    secret: V1Secret = await core.read_namespaced_secret(
-                        self.config.token_store_k8s_secret_name,
-                        self.config.token_store_k8s_namespace,
+            try:
+                secret: V1Secret = await core.read_namespaced_secret(
+                    self.config.token_store_k8s_secret_name,
+                    self.config.token_store_k8s_namespace,
+                )
+                if secret.data and "ecobee_refresh_token" in secret.data:
+                    del secret.data["ecobee_refresh_token"]
+                secret.string_data = {
+                    "ecobee_refresh_token": self.refresh_token,
+                }
+                logger.info(
+                    "Updating secret %s with new refresh token",
+                    self.config.token_store_k8s_secret_name,
+                )
+                await core.replace_namespaced_secret(
+                    self.config.token_store_k8s_secret_name,
+                    self.config.token_store_k8s_namespace,
+                    secret,
+                )
+            except ApiException as e:
+                if e.status == 404:
+                    secret = V1Secret(
+                        metadata=V1ObjectMeta(
+                            namespace=self.config.token_store_k8s_namespace,
+                            name=self.config.token_store_k8s_secret_name,
+                        ),
+                        type="Opaque",
+                        string_data={
+                            "ecobee_refresh_token": self.refresh_token,
+                        },
                     )
-                    if secret.data and "ecobee_refresh_token" in secret.data:
-                        del secret.data["ecobee_refresh_token"]
-                    secret.string_data = {
-                        "ecobee_refresh_token": self.refresh_token,
-                    }
                     logger.info(
-                        "Updating secret %s with new refresh token",
+                        "Creating secret %s with new refresh token",
                         self.config.token_store_k8s_secret_name,
                     )
-                    await core.replace_namespaced_secret(
-                        self.config.token_store_k8s_secret_name,
+                    await core.create_namespaced_secret(
                         self.config.token_store_k8s_namespace,
                         secret,
                     )
-                except ApiException as e:
-                    if e.status == 404:
-                        secret = V1Secret(
-                            metadata=V1ObjectMeta(
-                                namespace=self.config.token_store_k8s_namespace,
-                                name=self.config.token_store_k8s_secret_name,
-                            ),
-                            type="Opaque",
-                            string_data={
-                                "ecobee_refresh_token": self.refresh_token,
-                            },
-                        )
-                        logger.info(
-                            "Creating secret %s with new refresh token",
-                            self.config.token_store_k8s_secret_name,
-                        )
-                        await core.create_namespaced_secret(
-                            self.config.token_store_k8s_namespace,
-                            secret,
-                        )
-                    else:
-                        raise e
+                else:
+                    raise e
         else:
             raise ValueError(
                 f"Invalid token store type: {self.config.token_store_type}"
