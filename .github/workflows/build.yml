@@ -64,10 +64,10 @@ jobs:
         id: version
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "::set-output name=version::${{ steps.meta.outputs.version }}"
+            echo "version=${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
           else
             # Use the date as the semver instead
-            echo "::set-output name=version::$(date +'%Y.%-m.%-d')-dev+${{ github.sha }}"
+            echo "version=$(date +'%Y.%-m.%-d')-dev+${{ github.sha }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Install Poetry
