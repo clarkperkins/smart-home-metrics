@@ -264,6 +264,7 @@ class EcobeeMetricCollector(MetricCollector):
         self.ecobee = MetricsEcobeeService()
 
         self._revisions: dict[str, Revisions] = {}
+        self._cache: dict[str, Thermostat] = {}
 
     async def initialize(self):
         await self.ecobee.initialize_tokens()
@@ -376,6 +377,23 @@ class EcobeeMetricCollector(MetricCollector):
                 self._revisions[thermostat_id] = new_revisions
 
         for thermostat in thermostats:
+            old_thermostat = self._cache.get(thermostat.identifier)
+
+            # Copy things over from the previous if we don't have new data
+            if old_thermostat is not None:
+                if not thermostat.runtime:
+                    thermostat._runtime = old_thermostat.runtime
+                if not thermostat.remote_sensors:
+                    thermostat._remote_sensors = old_thermostat.remote_sensors
+
+            self._cache[thermostat.identifier] = thermostat
+
+        # Delete any thermostats from the cache that no longer exist
+        thermostat_ids_to_remove = self._cache.keys() - new_thermostat_ids
+        for thermostat_id in thermostat_ids_to_remove:
+            del self._cache[thermostat_id]
+
+        for thermostat in self._cache.values():
             labels = [
                 thermostat.identifier,
                 thermostat.name,
