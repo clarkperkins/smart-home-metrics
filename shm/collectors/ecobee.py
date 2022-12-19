@@ -35,6 +35,24 @@ from shm.collectors import MetricCollector
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+ALL_EQUIPMENT = [
+    "heatPump",
+    "heatPump2",
+    "heatPump3",
+    "compCool1",
+    "compCool2",
+    "auxHeat1",
+    "auxHeat2",
+    "auxHeat3",
+    "fan",
+    "humidifier",
+    "dehumidifier",
+    "ventilator",
+    "economizer",
+    "compHotWater",
+    "auxHotWater",
+]
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -230,7 +248,7 @@ class Revisions:
     thermostat: str
     alerts: str
     runtime: str
-    internal: str
+    interval: str
 
 
 class EcobeeMetricCollector(MetricCollector):
@@ -238,17 +256,6 @@ class EcobeeMetricCollector(MetricCollector):
         "thermostat_id",
         "thermostat_name",
         "sensor_name",
-        # "device_id",
-        # "device_name",
-        # "device_label",
-        # "location_id",
-        # "location_name",
-        # "room_id",
-        # "room_name",
-        # "type",
-        # "device_type_id",
-        # "device_type_name",
-        # "device_type_network",
     ]
     default_documentation = "Ecobee Device"
 
@@ -257,7 +264,6 @@ class EcobeeMetricCollector(MetricCollector):
         self.ecobee = MetricsEcobeeService()
 
         self._revisions: dict[str, Revisions] = {}
-        self._cache: dict[str, Thermostat] = {}
 
     async def initialize(self):
         await self.ecobee.initialize_tokens()
@@ -274,17 +280,18 @@ class EcobeeMetricCollector(MetricCollector):
         actual_voc = self.get_gauge("ecobee_actual_voc", unit="ppb")
         actual_co2 = self.get_gauge("ecobee_actual_co2", unit="ppm")
 
+        equipment_status = self.get_enum("ecobee_equipment_status")
+
         sensor_temp = self.get_gauge("ecobee_sensor_temperature", unit="f")
         sensor_occupancy = self.get_gauge("ecobee_sensor_occupancy")
         sensor_humidity = self.get_gauge("ecobee_sensor_humidity", unit="pct")
 
-        selection = Selection(
-            SelectionType.REGISTERED.value,
-            "",
-            include_equipment_status=True,
+        summary = await self.ecobee.request_thermostats_summary_async(
+            Selection(
+                SelectionType.REGISTERED.value,
+                "",
+            )
         )
-
-        summary = await self.ecobee.request_thermostats_summary_async(selection)
 
         new_thermostat_ids: set[str] = set()
         thermostats: list[Thermostat] = []
@@ -302,7 +309,7 @@ class EcobeeMetricCollector(MetricCollector):
                     thermostat_revision,
                     alerts_revision,
                     runtime_revision,
-                    internal_revision,
+                    interval_revision,
                 ) = revision.split(":")
 
                 new_thermostat_ids.add(thermostat_id)
@@ -311,7 +318,7 @@ class EcobeeMetricCollector(MetricCollector):
                     thermostat_revision,
                     alerts_revision,
                     runtime_revision,
-                    internal_revision,
+                    interval_revision,
                 )
 
                 old_revisions = self._revisions.get(thermostat_id)
@@ -322,29 +329,39 @@ class EcobeeMetricCollector(MetricCollector):
                     include_equipment_status=True,
                 )
 
-                should_request = False
-
                 if old_revisions:
                     if old_revisions.thermostat != new_revisions.thermostat:
-                        should_request = True
+                        logger.debug(
+                            "Thermostat revision changed for %s, requesting new settings and device data",
+                            thermostat_name,
+                        )
                         selection.include_settings = True
                         selection.include_program = True
                         selection.include_events = True
                         selection.include_device = True
 
                     if old_revisions.alerts != new_revisions.alerts:
-                        should_request = True
+                        logger.debug(
+                            "Alerts revision changed for %s, requesting new alert data",
+                            thermostat_name,
+                        )
                         selection.include_alerts = True
 
                     if old_revisions.runtime != new_revisions.runtime:
-                        should_request = True
+                        logger.debug(
+                            "Runtime revision changed for %s, requesting new remote sensor data",
+                            thermostat_name,
+                        )
+                        selection.include_runtime = True
                         selection.include_sensors = True
 
-                    if old_revisions.internal != new_revisions.internal:
-                        should_request = True
-                        selection.include_runtime = True
+                    if old_revisions.interval != new_revisions.interval:
+                        logger.debug(
+                            "Interval revision changed for %s, requesting new runtime data",
+                            thermostat_name,
+                        )
+                        selection.include_extended_runtime = True
                 else:
-                    should_request = True
                     # just get everything
                     selection.include_settings = True
                     selection.include_program = True
@@ -353,31 +370,24 @@ class EcobeeMetricCollector(MetricCollector):
                     selection.include_alerts = True
                     selection.include_sensors = True
                     selection.include_runtime = True
+                    selection.include_extended_runtime = True
 
-                if should_request:
-                    group.start_soon(_get_thermostat, selection)
-
+                group.start_soon(_get_thermostat, selection)
                 self._revisions[thermostat_id] = new_revisions
 
         for thermostat in thermostats:
-            old_thermostat = self._cache.get(thermostat.identifier)
-
-            # Copy things over from the previous if we don't have new data
-            if old_thermostat is not None:
-                if not thermostat.runtime:
-                    thermostat._runtime = old_thermostat.runtime
-                if not thermostat.remote_sensors:
-                    thermostat._remote_sensors = old_thermostat.remote_sensors
-
-            self._cache[thermostat.identifier] = thermostat
-
-        for thermostat in self._cache.values():
-            runtime: Runtime = thermostat.runtime
-
             labels = [
                 thermostat.identifier,
                 thermostat.name,
+                "",
             ]
+
+            running_equipment = set(thermostat.equipment_status.split(","))
+            runtime: Runtime = thermostat.runtime
+
+            equipment_status.add_metric(
+                labels, {e: e in running_equipment for e in ALL_EQUIPMENT}
+            )
 
             actual_temp.add_metric(labels, runtime.actual_temperature / 10)
             raw_temp.add_metric(labels, runtime.raw_temperature / 10)
