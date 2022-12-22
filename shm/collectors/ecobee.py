@@ -29,6 +29,8 @@ from pyecobee import (
     Selection,
     SelectionType,
     Thermostat,
+    Weather,
+    WeatherForecast,
 )
 
 from shm.collectors import MetricCollector
@@ -280,6 +282,7 @@ class EcobeeMetricCollector(MetricCollector):
         desired_cool = self.get_gauge("ecobee_desired_cool", unit="f")
         actual_voc = self.get_gauge("ecobee_actual_voc", unit="ppb")
         actual_co2 = self.get_gauge("ecobee_actual_co2", unit="ppm")
+        outdoor_temp = self.get_gauge("ecobee_outdoor_temperature", unit="f")
 
         equipment_status = self.get_enum("ecobee_equipment_status")
 
@@ -328,6 +331,7 @@ class EcobeeMetricCollector(MetricCollector):
                     SelectionType.THERMOSTATS.value,
                     thermostat_id,
                     include_equipment_status=True,
+                    include_weather=True,
                 )
 
                 if old_revisions:
@@ -414,6 +418,10 @@ class EcobeeMetricCollector(MetricCollector):
             desired_cool.add_metric(labels, runtime.desired_cool / 10)
             actual_voc.add_metric(labels, runtime.actual_voc)
             actual_co2.add_metric(labels, runtime.actual_co2)
+
+            weather: Weather = thermostat.weather
+            forecast: WeatherForecast = weather.forecasts[0]
+            outdoor_temp.add_metric(labels, forecast.temperature / 10)
 
             remote_sensors: list[RemoteSensor] = thermostat.remote_sensors
 
