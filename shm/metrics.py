@@ -9,11 +9,13 @@ from prometheus_client.registry import Collector
 from shm.collectors import MetricCollector
 from shm.collectors.ecobee import EcobeeMetricCollector
 from shm.collectors.smartthings import SmartThingsMetricCollector
+from shm.collectors.weatherapi import WeatherApiMetricCollector
 
 logger = logging.getLogger(__name__)
 
 ECOBEE_ENABLED = True
 ST_ENABLED = True
+WEATHERAPI_ENABLED = True
 
 
 class SmartHomeCollector(Collector):
@@ -28,6 +30,9 @@ class SmartHomeCollector(Collector):
 
         if ECOBEE_ENABLED:
             self.collectors.append(EcobeeMetricCollector(self.session))
+
+        if WEATHERAPI_ENABLED:
+            self.collectors.append(WeatherApiMetricCollector(self.session))
 
         # initialize them all
         async with anyio.create_task_group() as group:
