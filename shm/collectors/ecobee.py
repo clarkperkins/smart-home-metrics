@@ -294,14 +294,15 @@ class EcobeeMetricCollector(MetricCollector):
             Selection(
                 SelectionType.REGISTERED.value,
                 "",
-            )
+            ),
+            timeout=15,
         )
 
         new_thermostat_ids: set[str] = set()
         thermostats: list[Thermostat] = []
 
         async def _get_thermostat(s: Selection):
-            r = await self.ecobee.request_thermostats_async(s)
+            r = await self.ecobee.request_thermostats_async(s, timeout=15)
             thermostats.append(r.thermostat_list[0])
 
         async with anyio.create_task_group() as group:
