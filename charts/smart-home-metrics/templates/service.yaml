@@ -11,5 +11,8 @@ spec:
       targetPort: http-metrics
       protocol: TCP
       name: http-metrics
+  ipFamilyPolicy: SingleStack
+  ipFamilies:
+    - IPv4
   selector:
     {{- include "smart-home-metrics.selectorLabels" . | nindent 4 }}
