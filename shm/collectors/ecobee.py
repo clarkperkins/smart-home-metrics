@@ -18,7 +18,8 @@ from kubernetes_asyncio.client import (
     V1Secret,
 )
 from kubernetes_asyncio.config import load_incluster_config
-from pydantic import BaseModel, BaseSettings
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings
 from pyecobee import (
     EcobeeAuthorizationException,
     EcobeeService,

@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 import anyio
 from aiohttp import ClientSession
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
 
 from shm.collectors import MetricCollector

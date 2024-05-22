@@ -1,7 +1,8 @@
 import logging
 
 from aiohttp import ClientSession
-from pydantic import BaseModel, BaseSettings
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings
 
 from shm.collectors import MetricCollector
 

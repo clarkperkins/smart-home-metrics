@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS build
+FROM python:3.12-slim AS build
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ ARG APP_VERSION="0.0.0"
 RUN poetry version $APP_VERSION
 RUN poetry install --sync --without=dev
 
-FROM python:3.11-slim AS shm
+FROM python:3.12-slim AS shm
 
 ENV PYTHONUNBUFFERED 1
 ENV PIP_NO_CACHE_DIR off
