@@ -10,7 +10,7 @@ description = "Smart Home Prometheus Metrics"
 authors = ["Clark Perkins <r.clark.perkins@gmail.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 
 anyio = "*"
 colorlog = "*"
@@ -19,6 +19,7 @@ kubernetes_asyncio = "*"
 prometheus-client = "*"
 prometheus-fastapi-instrumentator = "*"
 pydantic = "*"
+pydantic-settings = "*"
 pyecobee = "*"
 pysmartthings = "*"
 pyyaml = "*"
