@@ -11,7 +11,6 @@ from shm.collectors import MetricCollector
 
 logger = logging.getLogger(__name__)
 
-
 EXCLUDED_DEVICE_NAMES = [
     "v4 - ecobee Thermostat - Heat and Cool (F)",
     "ecobee Sensor",
@@ -156,7 +155,7 @@ class DeviceMetric:
 
                     key = f"smartthings_{component}_{capability}_{attribute}".replace(
                         "-", "_"
-                    )
+                    ).replace(".", "_")
                     value = data.get("value")
 
                     if isinstance(value, (int, float)):
