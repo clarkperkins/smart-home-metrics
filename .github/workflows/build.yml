@@ -97,7 +97,7 @@ jobs:
 #          files: reports/tests/*.xml
 
       - name: SonarCloud Scan
-        uses: sonarsource/sonarcloud-github-action@v1.6
+        uses: sonarsource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
