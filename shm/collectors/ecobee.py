@@ -1,14 +1,15 @@
 import base64
-import functools
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
 import anyio
+import anyio.to_thread
 from aiohttp import ClientSession
 from kubernetes_asyncio.client import (
     ApiClient,
@@ -78,9 +79,9 @@ class EcobeeTokens(BaseModel):
 
 
 def to_async(f: Callable[..., T]) -> Callable[..., Coroutine[Any, Any, T]]:
-    @functools.wraps(f)
+    @wraps(f)
     async def inner(*args, **kwargs) -> T:
-        return await anyio.to_thread.run_sync(functools.partial(f, *args, **kwargs))
+        return await anyio.to_thread.run_sync(partial(f, *args, **kwargs))
 
     return inner
 
@@ -104,7 +105,8 @@ class MetricsEcobeeService(EcobeeService):
                         "Loading ecobee config from file: %s",
                         self.config.token_store_file_path,
                     )
-                    return EcobeeTokens.parse_file(self.config.token_store_file_path)
+                    with self.config.token_store_file_path.open("rt") as f:
+                        return EcobeeTokens.model_validate_json(f.read())
                 else:
                     return None
 
@@ -157,7 +159,7 @@ class MetricsEcobeeService(EcobeeService):
                     self.config.token_store_file_path,
                 )
                 with self.config.token_store_file_path.open("wt") as f:
-                    f.write(t.json())
+                    f.write(t.model_dump_json())
 
             await save(tokens)
         elif self.config.token_store_type == "kubernetes":

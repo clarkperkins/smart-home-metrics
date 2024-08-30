@@ -49,3 +49,14 @@ Selector labels
 app.kubernetes.io/name: {{ include "smart-home-metrics.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Create the name of the service account to use
+*/}}
+{{- define "smart-home-metrics.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "smart-home-metrics.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
