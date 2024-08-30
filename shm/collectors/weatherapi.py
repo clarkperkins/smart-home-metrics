@@ -61,7 +61,7 @@ class WeatherApiMetricCollector(MetricCollector):
         current_url = f"https://api.weatherapi.com/v1/current.json?key={self.config.key}&q={self.config.query}"
 
         async with self.session.get(current_url) as r:
-            data = WeatherData.parse_obj(await r.json())
+            data = WeatherData.model_validate_json(await r.read())
 
             labels = [
                 data.location.name,

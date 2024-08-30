@@ -2,6 +2,7 @@ import logging
 from collections.abc import Iterable
 
 import anyio
+import anyio.from_thread
 from aiohttp import ClientSession
 from prometheus_client import Metric
 from prometheus_client.registry import Collector
