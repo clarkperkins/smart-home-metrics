@@ -5,7 +5,6 @@ description = "Smart Home Prometheus Metrics"
 authors = [
     { name = "Clark Perkins", email = "clarkperkins@users.noreply.github.com" }
 ]
-readme = "README.md"
 requires-python = ">=3.12.0,<4.0"
 dependencies = [
     "anyio",

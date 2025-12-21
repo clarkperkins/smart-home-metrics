@@ -5,6 +5,9 @@ WORKDIR /app
 #COPY docker/install_build.sh /app/
 #RUN sh install_build.sh
 
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 # Install poetry
 RUN python -m pip install poetry virtualenv
 
@@ -25,6 +28,7 @@ RUN poetry install --sync --without=dev
 
 FROM python:3.12-slim AS shm
 
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=off
 
