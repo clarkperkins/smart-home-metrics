@@ -42,12 +42,12 @@ spec:
             httpGet:
               path: /health
               port: http-metrics
-            initialDelaySeconds: 5
+            initialDelaySeconds: 30
           readinessProbe:
             httpGet:
               path: /health
               port: http-metrics
-            initialDelaySeconds: 5
+            initialDelaySeconds: 30
           env:
             - name: ECOBEE_TOKEN_STORE_TYPE
               value: kubernetes
