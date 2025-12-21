@@ -5,7 +5,7 @@ from collections.abc import Iterable
 import anyio
 from aiohttp import ClientSession
 from pydantic_settings import BaseSettings
-from pysmartthings import DeviceEntity, LocationEntity, RoomEntity, SmartThings
+from pysmartthings import BaseLocation, Device, Room, SmartThings
 
 from shm.collectors import MetricCollector
 
@@ -36,7 +36,7 @@ class SmartThingsMetricCollector(MetricCollector):
         "type",
         "device_type_id",
         "device_type_name",
-        "device_type_network",
+        "device_network_type",
     ]
     default_documentation = "SmartThings Device"
 
@@ -45,10 +45,11 @@ class SmartThingsMetricCollector(MetricCollector):
 
         self.config = SmartThingsConfig()
 
-        self.api = SmartThings(session, self.config.token)
+        self.api = SmartThings(session=session)
+        self.api.authenticate(self.config.token)
 
-    async def lookup_locations(self) -> dict[str, LocationEntity]:
-        locations = await self.api.locations()
+    async def lookup_locations(self) -> dict[str, BaseLocation]:
+        locations = await self.api.get_locations()
 
         location_lookup = {}
         for location in locations:
@@ -56,20 +57,20 @@ class SmartThingsMetricCollector(MetricCollector):
 
         return location_lookup
 
-    @staticmethod
     async def lookup_rooms(
-        locations: Iterable[LocationEntity],
-    ) -> dict[str, dict[str, RoomEntity]]:
-        rooms: list[RoomEntity] = []
+        self,
+        locations: Iterable[BaseLocation],
+    ) -> dict[str, dict[str, Room]]:
+        rooms: list[Room] = []
 
-        async def _save_room(loc: LocationEntity):
-            rooms.extend(await loc.rooms())
+        async def _save_room(loc: BaseLocation):
+            rooms.extend(await self.api.get_rooms(loc.location_id))
 
         async with anyio.create_task_group() as group:
             for location in locations:
                 group.start_soon(_save_room, location)
 
-        room_lookup: dict[str, dict[str, RoomEntity]] = defaultdict(dict)
+        room_lookup: dict[str, dict[str, Room]] = defaultdict(dict)
         for room in rooms:
             room_lookup[room.location_id][room.room_id] = room
 
@@ -78,7 +79,7 @@ class SmartThingsMetricCollector(MetricCollector):
     async def collect_metrics(self):
         logger.debug("Collecting smartthings metrics...")
 
-        devices = await self.api.devices()
+        devices = await self.api.get_devices()
         locations = await self.lookup_locations()
         rooms = await self.lookup_rooms(locations.values())
 
@@ -115,15 +116,17 @@ class DeviceMetric:
         self,
         collector: SmartThingsMetricCollector,
         api: SmartThings,
-        device: DeviceEntity,
-        locations: dict[str, LocationEntity],
-        rooms: dict[str, dict[str, RoomEntity]],
+        device: Device,
+        locations: dict[str, BaseLocation],
+        rooms: dict[str, dict[str, Room]],
     ):
         self.collector = collector
         self.api = api
         self.device = device
         self.location = locations.get(device.location_id)
-        self.room = rooms.get(device.location_id, {}).get(device.room_id)
+        self.room: Room | None = None
+        if device.room_id:
+            self.room = rooms.get(device.location_id, {}).get(device.room_id)
 
     def get_labels(self) -> list[str]:
         # Must match the order defined on the collector above
@@ -138,12 +141,11 @@ class DeviceMetric:
             self.device.type or "",
             self.device.device_type_id or "",
             self.device.device_type_name or "",
-            self.device.device_type_network or "",
+            self.device.device_network_type or "",
         ]
 
     async def get_metrics(self):
-        status = await self.api._service.get_device_status(self.device.device_id)
-        components = status.get("components", {})
+        components = await self.api.get_device_status(self.device.device_id)
 
         labels = self.get_labels()
 
@@ -156,10 +158,10 @@ class DeviceMetric:
                     key = f"smartthings_{component}_{capability}_{attribute}".replace(
                         "-", "_"
                     ).replace(".", "_")
-                    value = data.get("value")
+                    value = data.value
 
                     if isinstance(value, (int, float)):
-                        unit = data.get("unit")
+                        unit = data.unit or ""
                         if unit == "%":
                             unit = "pct"
 
@@ -177,25 +179,23 @@ class DeviceMetric:
                                 },
                             )
                     elif attribute == "threeAxis":
-                        self.collector.get_gauge(key, unit="x").add_metric(
-                            labels, value[0]
-                        )
-                        self.collector.get_gauge(key, unit="y").add_metric(
-                            labels, value[1]
-                        )
-                        self.collector.get_gauge(key, unit="z").add_metric(
-                            labels, value[2]
-                        )
+                        assert isinstance(value, list)
+                        x, y, z = value
+                        self.collector.get_gauge(key, unit="x").add_metric(labels, x)
+                        self.collector.get_gauge(key, unit="y").add_metric(labels, y)
+                        self.collector.get_gauge(key, unit="z").add_metric(labels, z)
                     elif attribute == "thermostatFanMode":
                         if value:
-                            modes = attributes["supportedThermostatFanModes"]["value"]
+                            modes = attributes["supportedThermostatFanModes"].value
+                            assert isinstance(modes, list)
                             e = self.collector.get_enum(key)
                             e.add_metric(
                                 labels, {mode: mode == value for mode in modes}
                             )
                     elif attribute == "thermostatMode":
                         if value:
-                            modes = attributes["supportedThermostatModes"]["value"]
+                            modes = attributes["supportedThermostatModes"].value
+                            assert isinstance(modes, list)
                             e = self.collector.get_enum(key)
                             e.add_metric(
                                 labels, {mode: mode == value for mode in modes}
