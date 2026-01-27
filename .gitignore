@@ -186,3 +186,9 @@ cython_debug/
 
 # Chart dependencies
 **/charts/*.tgz
+
+## Claude Code
+
+# Personal Claude Code configuration (should not be shared)
+CLAUDE.local.md
+**/.claude/settings.local.json
