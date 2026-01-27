@@ -12,18 +12,15 @@ jobs:
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  docker:
-    name: Docker Build & Push
+  docker-amd64:
+    name: Docker Build & Push (AMD64)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -36,18 +33,74 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker Build and Push
-        id: docker-build
         uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
             APP_VERSION=${{ needs.build.outputs.version }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
-          tags: ${{ needs.build.outputs.image-tags }}
+          tags: ${{ needs.build.outputs.image-tags }}-amd64
           labels: ${{ needs.build.outputs.image-labels }}
-          cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache
-          cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-amd64
+          cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-amd64,mode=max
+
+  docker-arm64:
+    name: Docker Build & Push (ARM64)
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: clarkperkins
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            APP_VERSION=${{ needs.build.outputs.version }}
+          platforms: linux/arm64
+          push: true
+          tags: ${{ needs.build.outputs.image-tags }}-arm64
+          labels: ${{ needs.build.outputs.image-labels }}
+          cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-arm64
+          cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-arm64,mode=max
+
+  docker-manifest:
+    name: Docker Manifest
+    needs: [build, docker-amd64, docker-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docker Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: clarkperkins
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and Push Manifest
+        run: |
+          # Convert newline-separated tags to array
+          IFS=$'\n' read -d '' -r -a TAGS <<< "${{ needs.build.outputs.image-tags }}" || true
+
+          # Create manifest for each tag
+          for TAG in "${TAGS[@]}"; do
+            docker buildx imagetools create -t "${TAG}" \
+              "${TAG}-amd64" \
+              "${TAG}-arm64"
+          done
 
   helm:
     name: Helm Build & Push
