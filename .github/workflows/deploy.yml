@@ -40,7 +40,7 @@ jobs:
             APP_VERSION=${{ needs.build.outputs.version }}
           platforms: linux/amd64
           push: true
-          tags: ${{ needs.build.outputs.image-tags }}-amd64
+          tags: ghcr.io/clarkperkins/shm:${{ needs.build.outputs.image-version }}-amd64
           labels: ${{ needs.build.outputs.image-labels }}
           cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-amd64
           cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-amd64,mode=max
@@ -73,7 +73,7 @@ jobs:
             APP_VERSION=${{ needs.build.outputs.version }}
           platforms: linux/arm64
           push: true
-          tags: ${{ needs.build.outputs.image-tags }}-arm64
+          tags: ghcr.io/clarkperkins/shm:${{ needs.build.outputs.image-version }}-arm64
           labels: ${{ needs.build.outputs.image-labels }}
           cache-from: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-arm64
           cache-to: type=registry,ref=ghcr.io/clarkperkins/shm:buildcache-arm64,mode=max
@@ -98,8 +98,8 @@ jobs:
           # Create manifest for each tag
           for TAG in "${TAGS[@]}"; do
             docker buildx imagetools create -t "${TAG}" \
-              "${TAG}-amd64" \
-              "${TAG}-arm64"
+              ghcr.io/clarkperkins/shm:${{ needs.build.outputs.image-version }}-amd64 \
+              ghcr.io/clarkperkins/shm:${{ needs.build.outputs.image-version }}-arm64
           done
 
   helm:
