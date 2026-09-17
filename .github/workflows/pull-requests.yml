@@ -8,5 +8,3 @@ jobs:
   build:
     name: Build
     uses: ./.github/workflows/build.yml
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
