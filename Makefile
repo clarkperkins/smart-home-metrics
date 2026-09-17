@@ -21,8 +21,8 @@ check/isort:
 check/black:
 	poetry run black shm --check
 
-check/pylint: reports
-	poetry run pylint shm --reports=n --exit-zero --msg-template="{path}:{line}: [{msg_id}({symbol}), {obj}] {msg}" > reports/pylint.txt
+check/pylint:
+	poetry run pylint shm --reports=n --fail-under=0 --fail-on=E
 
 check/mypy:
 	poetry run mypy shm
