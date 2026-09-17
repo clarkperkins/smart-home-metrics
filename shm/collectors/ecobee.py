@@ -19,7 +19,7 @@ from kubernetes_asyncio.client import (
     V1Secret,
 )
 from kubernetes_asyncio.config import load_incluster_config
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings
 from pyecobee import (
     EcobeeAuthorizationException,
@@ -63,6 +63,12 @@ T = TypeVar("T")
 UTC = ZoneInfo("UTC")
 
 
+K8S_TOKEN_STORE_CONFIG_ERROR = (
+    "ECOBEE_TOKEN_STORE_K8S_NAMESPACE and ECOBEE_TOKEN_STORE_K8S_SECRET_NAME are "
+    "required when ECOBEE_TOKEN_STORE_TYPE is 'kubernetes'"
+)
+
+
 class EcobeeConfig(BaseSettings):
     client_id: str
     token_store_type: str = "file"
@@ -72,6 +78,15 @@ class EcobeeConfig(BaseSettings):
 
     class Config:
         env_prefix = "ECOBEE_"
+
+    @model_validator(mode="after")
+    def _validate_k8s_token_store(self) -> "EcobeeConfig":
+        if self.token_store_type == "kubernetes" and not (
+            self.token_store_k8s_namespace and self.token_store_k8s_secret_name
+        ):
+            raise ValueError(K8S_TOKEN_STORE_CONFIG_ERROR)
+
+        return self
 
 
 class EcobeeTokens(BaseModel):
@@ -91,7 +106,20 @@ class MetricsEcobeeService(EcobeeService):
         super().__init__("Thermostat", config.client_id, scope=Scope.SMART_READ)
         self.config = config
         self.k8s_api_client: ApiClient | None = None
+        self.k8s_namespace = ""
+        self.k8s_secret_name = ""
         if config.token_store_type == "kubernetes":
+            # Guaranteed by EcobeeConfig's validator - repeated here so the
+            # values narrow to str for the kubernetes client calls below.
+            if (
+                config.token_store_k8s_namespace is None
+                or config.token_store_k8s_secret_name is None
+            ):
+                raise ValueError(K8S_TOKEN_STORE_CONFIG_ERROR)
+
+            self.k8s_namespace = config.token_store_k8s_namespace
+            self.k8s_secret_name = config.token_store_k8s_secret_name
+
             load_incluster_config()
             self.k8s_api_client = ApiClient()
 
@@ -118,11 +146,11 @@ class MetricsEcobeeService(EcobeeService):
             core = CoreV1Api(self.k8s_api_client)
             try:
                 secret: V1Secret = await core.read_namespaced_secret(
-                    self.config.token_store_k8s_secret_name,
-                    self.config.token_store_k8s_namespace,
+                    self.k8s_secret_name,
+                    self.k8s_namespace,
                 )
                 if secret.data:
-                    refresh_token_b64: str = secret.data.get("ecobee_refresh_token")
+                    refresh_token_b64 = secret.data.get("ecobee_refresh_token")
 
                     if refresh_token_b64:
                         self.refresh_token = base64.decodebytes(
@@ -130,14 +158,14 @@ class MetricsEcobeeService(EcobeeService):
                         ).decode("utf8")
                         logger.info(
                             "Loaded refresh token from secret: %s",
-                            self.config.token_store_k8s_secret_name,
+                            self.k8s_secret_name,
                         )
             except ApiException as e:
                 if e.status == 404:
                     logger.info(
                         "Secret %s not found in namespace %s",
-                        self.config.token_store_k8s_secret_name,
-                        self.config.token_store_k8s_namespace,
+                        self.k8s_secret_name,
+                        self.k8s_namespace,
                     )
                 else:
                     raise e
@@ -163,12 +191,16 @@ class MetricsEcobeeService(EcobeeService):
 
             await save(tokens)
         elif self.config.token_store_type == "kubernetes":
+            if self.refresh_token is None:
+                logger.warning("No refresh token to save, skipping secret update")
+                return
+
             core = CoreV1Api(self.k8s_api_client)
 
             try:
                 secret: V1Secret = await core.read_namespaced_secret(
-                    self.config.token_store_k8s_secret_name,
-                    self.config.token_store_k8s_namespace,
+                    self.k8s_secret_name,
+                    self.k8s_namespace,
                 )
                 if secret.data and "ecobee_refresh_token" in secret.data:
                     del secret.data["ecobee_refresh_token"]
@@ -177,19 +209,19 @@ class MetricsEcobeeService(EcobeeService):
                 }
                 logger.info(
                     "Updating secret %s with new refresh token",
-                    self.config.token_store_k8s_secret_name,
+                    self.k8s_secret_name,
                 )
                 await core.replace_namespaced_secret(
-                    self.config.token_store_k8s_secret_name,
-                    self.config.token_store_k8s_namespace,
+                    self.k8s_secret_name,
+                    self.k8s_namespace,
                     secret,
                 )
             except ApiException as e:
                 if e.status == 404:
                     secret = V1Secret(
                         metadata=V1ObjectMeta(
-                            namespace=self.config.token_store_k8s_namespace,
-                            name=self.config.token_store_k8s_secret_name,
+                            namespace=self.k8s_namespace,
+                            name=self.k8s_secret_name,
                         ),
                         type="Opaque",
                         string_data={
@@ -198,10 +230,10 @@ class MetricsEcobeeService(EcobeeService):
                     )
                     logger.info(
                         "Creating secret %s with new refresh token",
-                        self.config.token_store_k8s_secret_name,
+                        self.k8s_secret_name,
                     )
                     await core.create_namespaced_secret(
-                        self.config.token_store_k8s_namespace,
+                        self.k8s_namespace,
                         secret,
                     )
                 else:
