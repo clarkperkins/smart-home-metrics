@@ -153,7 +153,6 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 **Build** (.github/workflows/build.yml):
 - Runs on all branches and PRs
 - Executes `make check` (isort, black, pylint, mypy)
-- SonarCloud code quality scan
 - Docker metadata generation for versioning
 
 **Deploy** (.github/workflows/deploy.yml):
