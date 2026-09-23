@@ -5,6 +5,9 @@ on:
     tags: [ '*' ]
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build
@@ -13,6 +16,9 @@ jobs:
   docker-amd64:
     name: Docker Build & Push (AMD64)
     needs: build
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -46,6 +52,9 @@ jobs:
   docker-arm64:
     name: Docker Build & Push (ARM64)
     needs: build
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
@@ -79,6 +88,8 @@ jobs:
   docker-manifest:
     name: Docker Manifest
     needs: [build, docker-amd64, docker-arm64]
+    permissions:
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - name: Docker Login to GHCR
@@ -103,6 +114,9 @@ jobs:
   helm:
     name: Helm Build & Push
     needs: build
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
