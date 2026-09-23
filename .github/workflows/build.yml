@@ -16,6 +16,9 @@ on:
         description: Image Labels
         value: ${{ jobs.build.outputs.image-labels }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & Test
