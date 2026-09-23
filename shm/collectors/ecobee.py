@@ -318,6 +318,8 @@ class EcobeeMetricCollector(MetricCollector):
         actual_voc = self.get_gauge("ecobee_actual_voc", unit="ppb")
         actual_co2 = self.get_gauge("ecobee_actual_co2", unit="ppm")
         outdoor_temp = self.get_gauge("ecobee_outdoor_temperature", unit="f")
+        outdoor_humid = self.get_gauge("ecobee_outdoor_humidity", unit="pct")
+        outdoor_dewpoint = self.get_gauge("ecobee_outdoor_dewpoint", unit="f")
 
         equipment_status = self.get_enum("ecobee_equipment_status")
 
@@ -458,6 +460,8 @@ class EcobeeMetricCollector(MetricCollector):
             weather: Weather = thermostat.weather
             forecast: WeatherForecast = weather.forecasts[0]
             outdoor_temp.add_metric(labels, forecast.temperature / 10)
+            outdoor_humid.add_metric(labels, forecast.relative_humidity)
+            outdoor_dewpoint.add_metric(labels, forecast.dewpoint / 10)
 
             remote_sensors: list[RemoteSensor] = thermostat.remote_sensors
 
