@@ -157,13 +157,14 @@ class MetricsEcobeeService(EcobeeService):
                             refresh_token_b64.encode("utf8")
                         ).decode("utf8")
                         logger.info(
-                            "Loaded refresh token from Kubernetes secret in namespace %s",
-                            self.k8s_namespace,
+                            "Loaded refresh token from secret: %s",
+                            self.k8s_secret_name,
                         )
             except ApiException as e:
                 if e.status == 404:
                     logger.info(
-                        "Token store secret not found in namespace %s",
+                        "Secret %s not found in namespace %s",
+                        self.k8s_secret_name,
                         self.k8s_namespace,
                     )
                 else:
@@ -207,8 +208,8 @@ class MetricsEcobeeService(EcobeeService):
                     "ecobee_refresh_token": self.refresh_token,
                 }
                 logger.info(
-                    "Updating token store secret in namespace %s with new refresh token",
-                    self.k8s_namespace,
+                    "Updating secret %s with new refresh token",
+                    self.k8s_secret_name,
                 )
                 await core.replace_namespaced_secret(
                     self.k8s_secret_name,
@@ -228,8 +229,8 @@ class MetricsEcobeeService(EcobeeService):
                         },
                     )
                     logger.info(
-                        "Creating token store secret in namespace %s with new refresh token",
-                        self.k8s_namespace,
+                        "Creating secret %s with new refresh token",
+                        self.k8s_secret_name,
                     )
                     await core.create_namespaced_secret(
                         self.k8s_namespace,
