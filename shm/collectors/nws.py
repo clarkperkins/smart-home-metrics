@@ -1,11 +1,12 @@
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
+import anyio
 from aiohttp import ClientSession
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from shm.collectors import MetricCollector
 
@@ -16,24 +17,37 @@ BASE_URL = "https://api.weather.gov"
 
 class NwsConfig(BaseSettings):
     """
-    Either `station` (e.g. KAUS) or `latitude` + `longitude` must be set.
-    With coordinates, the nearest observation station is looked up from the /points API.
+    Stations can be listed explicitly with `stations` (e.g. NWS_STATIONS=KAUS,KATT)
+    and/or found from `latitude` + `longitude`, which adds the `nearest_stations`
+    closest observation stations from the /points API. At least one must be set.
     """
 
     model_config = SettingsConfigDict(env_prefix="NWS_")
 
-    station: str | None = None
+    stations: Annotated[list[str], NoDecode] = []
     latitude: float | None = None
     longitude: float | None = None
+    nearest_stations: int = Field(1, ge=1)
     # api.weather.gov requires a User-Agent identifying the application,
     # ideally with contact info: https://www.weather.gov/documentation/services-web-api
     user_agent: str = "smart-home-metrics (github.com/clarkperkins/smart-home-metrics)"
 
+    @field_validator("stations", mode="before")
+    @classmethod
+    def split_stations(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return [s.strip().upper() for s in v.split(",") if s.strip()]
+        return v
+
+    @property
+    def has_point(self) -> bool:
+        return self.latitude is not None and self.longitude is not None
+
     @model_validator(mode="after")
     def check_location(self) -> Self:
-        if not self.station and (self.latitude is None or self.longitude is None):
+        if not self.stations and not self.has_point:
             raise ValueError(
-                "NWS_STATION or NWS_LATITUDE and NWS_LONGITUDE must be set"
+                "NWS_STATIONS or NWS_LATITUDE and NWS_LONGITUDE must be set"
             )
         return self
 
@@ -112,35 +126,50 @@ class NwsMetricCollector(MetricCollector):
             "User-Agent": self.config.user_agent,
             "Accept": "application/geo+json",
         }
-        self.station: Station | None = None
+        # Resolved lazily and cached rather than in initialize(), so an API outage
+        # at startup doesn't take down the whole service. Entries that fail to
+        # resolve are retried on the next scrape.
+        self.stations: dict[str, Station] = {}
+        self.point_resolved = not self.config.has_point
 
     async def _get_json(self, url: str) -> Any:
         async with self.session.get(url, headers=self.headers) as r:
             r.raise_for_status()
             return await r.json(content_type=None)
 
-    async def _resolve_station(self) -> Station:
-        """
-        Resolve and cache the station. Done lazily rather than in initialize()
-        so an API outage at startup doesn't take down the whole service.
-        """
-        if self.station is not None:
-            return self.station
+    def _cache_station(self, props: dict[str, Any]):
+        station = Station(id=props["stationIdentifier"], name=props["name"])
+        if station.id not in self.stations:
+            logger.info("Using NWS station %s (%s)", station.id, station.name)
+            self.stations[station.id] = station
 
-        if self.config.station:
-            data = await self._get_json(f"{BASE_URL}/stations/{self.config.station}")
-            props = data["properties"]
-        else:
+    async def _resolve_station(self, station_id: str):
+        try:
+            data = await self._get_json(f"{BASE_URL}/stations/{station_id}")
+            self._cache_station(data["properties"])
+        except Exception as exc:
+            logger.warning("Failed to resolve NWS station %s", station_id, exc_info=exc)
+
+    async def _resolve_point(self):
+        try:
             # /points only accepts up to 4 decimal places
             point = f"{self.config.latitude:.4f},{self.config.longitude:.4f}"
             points = await self._get_json(f"{BASE_URL}/points/{point}")
             stations = await self._get_json(points["properties"]["observationStations"])
             # Stations are ordered by distance from the point
-            props = stations["features"][0]["properties"]
+            for feature in stations["features"][: self.config.nearest_stations]:
+                self._cache_station(feature["properties"])
+            self.point_resolved = True
+        except Exception as exc:
+            logger.warning("Failed to resolve NWS stations for point", exc_info=exc)
 
-        self.station = Station(id=props["stationIdentifier"], name=props["name"])
-        logger.info("Using NWS station %s (%s)", self.station.id, self.station.name)
-        return self.station
+    async def _resolve_stations(self):
+        async with anyio.create_task_group() as group:
+            for station_id in self.config.stations:
+                if station_id not in self.stations:
+                    group.start_soon(self._resolve_station, station_id)
+            if not self.point_resolved:
+                group.start_soon(self._resolve_point)
 
     def _add(self, name: str, value: QuantitativeValue | None, labels: list[str]):
         # NWS reports null for anything the station didn't measure (e.g. heat index in winter)
@@ -158,12 +187,24 @@ class NwsMetricCollector(MetricCollector):
         )
 
     async def collect_metrics(self):
-        station = await self._resolve_station()
+        await self._resolve_stations()
 
-        data = await self._get_json(
-            f"{BASE_URL}/stations/{station.id}/observations/latest"
-        )
-        obs = ObservationResponse.model_validate(data).properties
+        async with anyio.create_task_group() as group:
+            for station in self.stations.values():
+                group.start_soon(self._collect_station, station)
+
+    async def _collect_station(self, station: Station):
+        # Isolate failures so one flaky station doesn't drop the others
+        try:
+            data = await self._get_json(
+                f"{BASE_URL}/stations/{station.id}/observations/latest"
+            )
+            obs = ObservationResponse.model_validate(data).properties
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch NWS observation for %s", station.id, exc_info=exc
+            )
+            return
 
         labels = [station.id, station.name]
 
