@@ -4,6 +4,8 @@ import pytest
 
 from shm.collectors.nws import NwsMetricCollector
 
+BASE = "https://api.weather.gov"
+
 STATION = {"properties": {"stationIdentifier": "KAUS", "name": "Austin-Bergstrom"}}
 
 POINTS = {
@@ -16,6 +18,7 @@ STATIONS = {
     "features": [
         {"properties": {"stationIdentifier": "KATT", "name": "Austin Camp Mabry"}},
         {"properties": {"stationIdentifier": "KAUS", "name": "Austin-Bergstrom"}},
+        {"properties": {"stationIdentifier": "KEDC", "name": "Austin Executive"}},
     ]
 }
 
@@ -54,7 +57,8 @@ class FakeResponse:
         return False
 
     def raise_for_status(self):
-        pass
+        if self.data is None:
+            raise RuntimeError("404")
 
     async def json(self, content_type=None):
         return self.data
@@ -68,26 +72,38 @@ class FakeSession:
     def get(self, url: str, headers=None):
         assert headers and "User-Agent" in headers
         self.requests.append(url)
-        return FakeResponse(self.routes[url])
+        return FakeResponse(self.routes.get(url))
 
 
-def samples(metrics) -> dict[str, float]:
-    return {s.name: s.value for m in metrics for s in m.samples}
+def samples(metrics) -> dict[tuple[str, str], float]:
+    return {
+        (s.labels["station_id"], s.name): s.value for m in metrics for s in m.samples
+    }
+
+
+def station(station_id: str, name: str) -> dict[str, Any]:
+    return {"properties": {"stationIdentifier": station_id, "name": name}}
+
+
+@pytest.fixture(autouse=True)
+def clear_env(monkeypatch):
+    for var in ("NWS_STATIONS", "NWS_LATITUDE", "NWS_LONGITUDE"):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.mark.asyncio
 async def test_collect_by_station(monkeypatch):
-    monkeypatch.setenv("NWS_STATION", "KAUS")
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
     session = FakeSession(
         {
-            "https://api.weather.gov/stations/KAUS": STATION,
-            "https://api.weather.gov/stations/KAUS/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KAUS": STATION,
+            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
 
     metrics = list(await collector.perform_collection())
-    values = samples(metrics)
+    values = {name: v for (_, name), v in samples(metrics).items()}
 
     assert values["nws_temperature_f"] == pytest.approx(77.0)
     assert values["nws_dewpoint_f"] == pytest.approx(50.0)
@@ -108,30 +124,64 @@ async def test_collect_by_station(monkeypatch):
 
     # station lookup is cached across collections
     await collector.perform_collection()
-    assert session.requests.count("https://api.weather.gov/stations/KAUS") == 1
+    assert session.requests.count(f"{BASE}/stations/KAUS") == 1
 
 
 @pytest.mark.asyncio
-async def test_resolve_station_from_point(monkeypatch):
-    monkeypatch.setenv("NWS_LATITUDE", "30.26715")
-    monkeypatch.setenv("NWS_LONGITUDE", "-97.74306")
+async def test_multiple_stations_isolate_failures(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "kaus, KATT ,KBAD,KEDC")
     session = FakeSession(
         {
-            "https://api.weather.gov/points/30.2672,-97.7431": POINTS,
-            POINTS["properties"]["observationStations"]: STATIONS,
-            "https://api.weather.gov/stations/KATT/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KAUS": STATION,
+            f"{BASE}/stations/KATT": station("KATT", "Austin Camp Mabry"),
+            f"{BASE}/stations/KEDC": station("KEDC", "Austin Executive"),
+            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
+            # KBAD fails to resolve, KEDC resolves but its observation fails
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
 
-    metrics = list(await collector.perform_collection())
+    values = samples(await collector.perform_collection())
 
-    assert metrics
-    assert metrics[0].samples[0].labels["station_id"] == "KATT"
+    assert ("KAUS", "nws_temperature_f") in values
+    assert ("KATT", "nws_temperature_f") in values
+    assert {station_id for station_id, _ in values} == {"KAUS", "KATT"}
+
+    # unresolved stations are retried on the next scrape, resolved ones aren't
+    await collector.perform_collection()
+    assert session.requests.count(f"{BASE}/stations/KBAD") == 2
+    assert session.requests.count(f"{BASE}/stations/KATT") == 1
 
 
-def test_requires_location(monkeypatch):
-    for var in ("NWS_STATION", "NWS_LATITUDE", "NWS_LONGITUDE"):
-        monkeypatch.delenv(var, raising=False)
+@pytest.mark.asyncio
+async def test_resolve_nearest_stations_from_point(monkeypatch):
+    monkeypatch.setenv("NWS_LATITUDE", "30.26715")
+    monkeypatch.setenv("NWS_LONGITUDE", "-97.74306")
+    monkeypatch.setenv("NWS_NEAREST_STATIONS", "2")
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    session = FakeSession(
+        {
+            f"{BASE}/points/30.2672,-97.7431": POINTS,
+            POINTS["properties"]["observationStations"]: STATIONS,
+            f"{BASE}/stations/KAUS": STATION,
+            f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KEDC/observations/latest": OBSERVATION,
+        }
+    )
+    collector = NwsMetricCollector(session)  # type: ignore[arg-type]
+
+    values = samples(await collector.perform_collection())
+
+    # nearest 2 from the point, deduplicated against the explicit KAUS
+    assert {station_id for station_id, _ in values} == {"KATT", "KAUS"}
+    assert session.requests.count(f"{BASE}/stations/KAUS/observations/latest") == 1
+
+    await collector.perform_collection()
+    assert session.requests.count(f"{BASE}/points/30.2672,-97.7431") == 1
+
+
+def test_requires_location():
     with pytest.raises(ValueError):
         NwsMetricCollector(FakeSession({}))  # type: ignore[arg-type]

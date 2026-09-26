@@ -131,9 +131,10 @@ All collectors use `pydantic-settings` for environment-based configuration:
   - `ECOBEE_TOKEN_STORE_FILE_PATH` (default: ecobee.json)
   - `ECOBEE_TOKEN_STORE_K8S_NAMESPACE`
   - `ECOBEE_TOKEN_STORE_K8S_SECRET_NAME`
-- **NWS** (only enabled when `NWS_STATION` or `NWS_LATITUDE` is set):
-  - `NWS_STATION` (observation station ID, e.g. `KAUS`), or
-  - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest station resolved via `/points`)
+- **NWS** (only enabled when `NWS_STATIONS` or `NWS_LATITUDE` is set; both may be combined):
+  - `NWS_STATIONS` (comma-separated observation station IDs, e.g. `KAUS,KATT`)
+  - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest stations resolved via `/points`)
+  - `NWS_NEAREST_STATIONS` (how many of the closest stations to the point to use, default 1)
   - `NWS_USER_AGENT` (required by NWS; defaults to the project name/URL, add contact info)
 
 ### Ecobee Token Management

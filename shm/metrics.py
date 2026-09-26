@@ -20,7 +20,7 @@ ECOBEE_ENABLED = True
 ST_ENABLED = True
 WEATHERAPI_ENABLED = True
 # Opt-in so existing deployments without NWS config keep starting up
-NWS_ENABLED = bool(os.environ.get("NWS_STATION") or os.environ.get("NWS_LATITUDE"))
+NWS_ENABLED = bool(os.environ.get("NWS_STATIONS") or os.environ.get("NWS_LATITUDE"))
 
 
 class SmartHomeCollector(Collector):
