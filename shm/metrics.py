@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Iterable
 
 import anyio
@@ -9,6 +10,7 @@ from prometheus_client.registry import Collector
 
 from shm.collectors import MetricCollector
 from shm.collectors.ecobee import EcobeeMetricCollector
+from shm.collectors.nws import NwsMetricCollector
 from shm.collectors.smartthings import SmartThingsMetricCollector
 from shm.collectors.weatherapi import WeatherApiMetricCollector
 
@@ -17,6 +19,8 @@ logger = logging.getLogger(__name__)
 ECOBEE_ENABLED = True
 ST_ENABLED = True
 WEATHERAPI_ENABLED = True
+# Opt-in so existing deployments without NWS config keep starting up
+NWS_ENABLED = bool(os.environ.get("NWS_STATION") or os.environ.get("NWS_LATITUDE"))
 
 
 class SmartHomeCollector(Collector):
@@ -34,6 +38,9 @@ class SmartHomeCollector(Collector):
 
         if WEATHERAPI_ENABLED:
             self.collectors.append(WeatherApiMetricCollector(self.session))
+
+        if NWS_ENABLED:
+            self.collectors.append(NwsMetricCollector(self.session))
 
         # initialize them all
         async with anyio.create_task_group() as group:
