@@ -8,6 +8,7 @@ Smart Home Prometheus Metrics (shm) is a Python-based FastAPI service that colle
 - **SmartThings**: Samsung SmartThings devices (sensors, switches, thermostats)
 - **Ecobee**: Ecobee thermostats and sensors
 - **WeatherAPI**: Weather data
+- **NWS**: National Weather Service observations from api.weather.gov (opt-in)
 
 The service runs as a containerized application designed for Kubernetes deployment with Prometheus scraping.
 
@@ -83,7 +84,8 @@ shm/
     ├── __init__.py      # MetricCollector abstract base class
     ├── smartthings.py   # SmartThings collector
     ├── ecobee.py        # Ecobee collector
-    └── weatherapi.py    # WeatherAPI collector
+    ├── weatherapi.py    # WeatherAPI collector
+    └── nws.py           # National Weather Service (api.weather.gov) collector
 ```
 
 ### Collector Pattern
@@ -129,6 +131,10 @@ All collectors use `pydantic-settings` for environment-based configuration:
   - `ECOBEE_TOKEN_STORE_FILE_PATH` (default: ecobee.json)
   - `ECOBEE_TOKEN_STORE_K8S_NAMESPACE`
   - `ECOBEE_TOKEN_STORE_K8S_SECRET_NAME`
+- **NWS** (only enabled when `NWS_STATION` or `NWS_LATITUDE` is set):
+  - `NWS_STATION` (observation station ID, e.g. `KAUS`), or
+  - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest station resolved via `/points`)
+  - `NWS_USER_AGENT` (required by NWS; defaults to the project name/URL, add contact info)
 
 ### Ecobee Token Management
 
