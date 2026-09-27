@@ -1,7 +1,7 @@
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Self
 
 import anyio
@@ -22,6 +22,12 @@ INVALID_RETRY_SECONDS = 60 * 60
 # How often to re-resolve the nearest stations for a point, so a retired or
 # long-dead station is eventually replaced by the next closest one
 POINT_TTL_SECONDS = 24 * 60 * 60
+# How much observation history to fetch each scrape. Samples older than the
+# TSDB head's append window (~1h in Prometheus/Mimir) are rejected anyway.
+LOOKBACK = timedelta(minutes=60)
+# How long a record that hasn't been QC'd yet holds back newer ones (see
+# _ready). QC typically lags 20-40 minutes; past this it's assumed never coming.
+PENDING_GRACE = timedelta(minutes=45)
 
 
 class NwsConfig(BaseSettings):
@@ -103,6 +109,10 @@ class ObservationResponse(BaseModel):
     properties: Observation
 
 
+class ObservationCollection(BaseModel):
+    features: list[ObservationResponse]
+
+
 class Station(BaseModel):
     id: str
     name: str
@@ -160,6 +170,40 @@ FIELDS: list[tuple[str, str, str]] = [
 
 # MADIS quality control flag for values that failed QC
 QC_REJECTED = "X"
+# MADIS quality control flag for values that haven't been QC'd yet
+QC_PENDING = "Z"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _qc_pending(obs: Observation) -> bool:
+    """
+    QC hasn't reached this record yet. Mesonet stations publish records with every
+    field null and flagged Z, which fill in once QC runs. A record with only some
+    fields still at Z (e.g. a METAR without a dewpoint) has been QC'd.
+    """
+    return not any(
+        value is not None and value.quality_control not in (None, QC_PENDING)
+        for value in (getattr(obs, field) for _, field, _ in FIELDS)
+    )
+
+
+def _ready(observations: list[Observation], now: datetime) -> list[Observation]:
+    """
+    The QC'd observations, oldest first, up to the first recent one still waiting on
+    QC. QC runs in batches and not strictly in order, so exporting past a pending
+    record would make it out of order (and dropped by the scraper) once it's QC'd.
+    """
+    ready = []
+    for obs in sorted(observations, key=lambda o: o.timestamp):
+        if _qc_pending(obs):
+            if now - obs.timestamp < PENDING_GRACE:
+                break
+            continue
+        ready.append(obs)
+    return ready
 
 
 def _convert(value: float, unit_code: str, target: str) -> float | None:
@@ -233,6 +277,8 @@ class NwsMetricCollector(MetricCollector):
         self.invalid_until: dict[str, float] = {}
         self.point_stations: list[Station] = []
         self.point_expires = 0.0
+        # Newest observation exported per station, so each is only exported once
+        self.last_exported: dict[str, datetime] = {}
 
     async def _get_json(self, url: str) -> Any:
         async with self.session.get(
@@ -348,21 +394,43 @@ class NwsMetricCollector(MetricCollector):
             for station in stations.values():
                 group.start_soon(self._collect_station, station)
 
+    async def _fetch_observations(self, station: Station) -> list[Observation]:
+        # /observations/latest (even with require_qc) only ever returns the newest
+        # record, and QC'd records show up in batches, so it skips most of them for
+        # stations reporting every 5 minutes. Read the recent history instead.
+        # The start is rounded down so successive scrapes share a cacheable URL.
+        start = _now() - LOOKBACK
+        start = start.replace(
+            minute=start.minute - start.minute % 5, second=0, microsecond=0
+        )
+        data = await self._get_json(
+            f"{BASE_URL}/stations/{station.id}/observations"
+            f"?start={start:%Y-%m-%dT%H:%M:%SZ}"
+        )
+        return [
+            f.properties for f in ObservationCollection.model_validate(data).features
+        ]
+
     async def _collect_station(self, station: Station):
         # Isolate failures so one flaky station doesn't drop the others
         try:
-            # Without require_qc the API strips the latest observation for
-            # mesonet (non-METAR) stations down to just the wind gust
-            data = await self._get_json(
-                f"{BASE_URL}/stations/{station.id}/observations/latest?require_qc=true"
-            )
-            obs = ObservationResponse.model_validate(data).properties
+            observations = await self._fetch_observations(station)
         except Exception as exc:
-            _log_failure(f"fetch NWS observation for {station.id}", exc)
+            _log_failure(f"fetch NWS observations for {station.id}", exc)
             return
 
+        ready = _ready(observations, _now())
+        last = self.last_exported.get(station.id)
+        # Re-exporting older samples is harmless (the TSDB already has them) but the
+        # scraper logs every one it drops as out of order, so only export new ones.
+        # A scrape that fails after this loses those samples.
+        new = [obs for obs in ready if last is None or obs.timestamp > last]
+        newest = ready[-1].timestamp if ready else last
+        if newest is None:
+            return
+        self.last_exported[station.id] = newest
+
         labels = [station.id, station.name]
-        observed_at = obs.timestamp.timestamp()
 
         # Stations typically report hourly, so expose the observation time for staleness
         # checks. This one is left at scrape time so it's always current in instant queries.
@@ -370,10 +438,14 @@ class NwsMetricCollector(MetricCollector):
             f"{self.prefix}_observation_timestamp",
             "seconds",
             "Time of the latest NWS observation",
-        ).add_metric(labels, observed_at)
+        ).add_metric(labels, newest.timestamp())
 
         # Measurements carry the observation time rather than the scrape time, so
         # the (often 10-60 min old) values land at the time they were observed.
         # Instant queries only look back 5m, so query them with last_over_time().
+        # Each series' samples must be contiguous and in increasing time order.
         for name, field, unit in FIELDS:
-            self._add(name, getattr(obs, field), unit, labels, observed_at)
+            for obs in new:
+                self._add(
+                    name, getattr(obs, field), unit, labels, obs.timestamp.timestamp()
+                )
