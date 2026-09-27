@@ -59,6 +59,14 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
+# Extra environment variables for non-secret settings, e.g. the NWS collector.
+# Secrets (tokens, API keys) belong in the chart's Secret, which is loaded with envFrom.
+extraEnv: []
+  # - name: NWS_STATIONS
+  #   value: KAUS,KATT
+  # - name: NWS_USER_AGENT
+  #   value: "smart-home-metrics (you@example.com)"
+
 nodeSelector: {}
 
 tolerations: []
