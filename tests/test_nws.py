@@ -176,6 +176,11 @@ async def test_collect_by_station(monkeypatch):
     assert values["nws_precipitation_last_hour_in"] == pytest.approx(1.0)
     assert values["nws_observation_timestamp_seconds"] == 1790437980.0
 
+    # measurements are stamped with the observation time, the staleness gauge isn't
+    stamped = {s.name: s.timestamp for m in metrics for s in m.samples if s.timestamp}
+    assert stamped["nws_temperature_f"] == 1790437980.0
+    assert "nws_observation_timestamp_seconds" not in stamped
+
     # null values are omitted rather than exported as NaN/0
     assert "nws_wind_gust_mph" not in values
     assert "nws_heat_index_f" not in values
