@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -42,8 +43,9 @@ def stations_url(limit: int = 1) -> str:
     return f"{POINTS['properties']['observationStations']}?limit={limit}"
 
 
-def latest_url(station: str) -> str:
-    return f"{BASE}/stations/{station}/observations/latest?require_qc=true"
+def obs_url(station: str) -> str:
+    # FakeSession ignores the ?start= query, which depends on the time
+    return f"{BASE}/stations/{station}/observations"
 
 
 def qv(unit: str, value: float | None, qc: str = "V") -> dict[str, Any]:
@@ -106,6 +108,13 @@ class FakeSession:
         assert headers and "User-Agent" in headers
         assert isinstance(timeout, ClientTimeout) and timeout.total
         self.requests.append(url)
+        path, _, query = url.partition("?")
+        if path.endswith("/observations") and query.startswith("start="):
+            data = self.routes.get(path)
+            # A single observation route is served as a one-record history
+            if isinstance(data, dict) and "properties" in data:
+                data = {"features": [data]}
+            return FakeResponse(url, data)
         return FakeResponse(url, self.routes.get(url))
 
 
@@ -140,6 +149,17 @@ def clear_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+# Shortly after the default observation time
+NOW = datetime(2026, 9, 26, 16, 7, 30, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def now(monkeypatch) -> list[datetime]:
+    current = [NOW]
+    monkeypatch.setattr(nws, "_now", lambda: current[0])
+    return current
+
+
 @pytest.fixture
 def clock(monkeypatch) -> Clock:
     c = Clock()
@@ -158,7 +178,7 @@ async def test_collect_by_station(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/KAUS": STATION,
-            latest_url("KAUS"): OBSERVATION,
+            obs_url("KAUS"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -199,7 +219,7 @@ async def test_units_and_quality_control(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/KAUS": STATION,
-            latest_url("KAUS"): observation(
+            obs_url("KAUS"): observation(
                 # rejected by QC
                 temperature=qv("degC", 60.0, qc="X"),
                 # questionable values are still exported
@@ -234,8 +254,8 @@ async def test_multiple_stations_isolate_failures(monkeypatch):
             f"{BASE}/stations/KAUS": STATION,
             f"{BASE}/stations/KATT": station("KATT", "Austin Camp Mabry"),
             f"{BASE}/stations/KEDC": station("KEDC", "Austin Executive"),
-            latest_url("KAUS"): OBSERVATION,
-            latest_url("KATT"): OBSERVATION,
+            obs_url("KAUS"): OBSERVATION,
+            obs_url("KATT"): OBSERVATION,
             # KBAD fails transiently, KEDC resolves but its observation fails
             f"{BASE}/stations/KBAD": 503,
         }
@@ -262,13 +282,13 @@ async def test_configured_id_differs_from_station_identifier(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/OLDID": station("NEWID", "Renamed"),
-            latest_url("NEWID"): OBSERVATION,
+            obs_url("NEWID"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
 
-    await collector.perform_collection()
     values = samples(await collector.perform_collection())
+    await collector.perform_collection()
 
     assert ("NEWID", "nws_temperature_f") in values
     assert session.requests.count(f"{BASE}/stations/OLDID") == 1
@@ -284,9 +304,9 @@ async def test_resolve_nearest_stations_from_point(monkeypatch):
             f"{BASE}/points/{POINT}": POINTS,
             stations_url(2): STATIONS,
             f"{BASE}/stations/KAUS": STATION,
-            latest_url("KATT"): OBSERVATION,
-            latest_url("KAUS"): OBSERVATION,
-            latest_url("KEDC"): OBSERVATION,
+            obs_url("KATT"): OBSERVATION,
+            obs_url("KAUS"): OBSERVATION,
+            obs_url("KEDC"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -295,7 +315,7 @@ async def test_resolve_nearest_stations_from_point(monkeypatch):
 
     # nearest 2 from the point, deduplicated against the explicit KAUS
     assert {station_id for station_id, _ in values} == {"KATT", "KAUS"}
-    assert session.requests.count(latest_url("KAUS")) == 1
+    assert sum(u.startswith(obs_url("KAUS") + "?") for u in session.requests) == 1
 
     await collector.perform_collection()
     assert session.requests.count(f"{BASE}/points/{POINT}") == 1
@@ -307,8 +327,8 @@ async def test_point_is_re_resolved_daily(monkeypatch, clock):
     routes: dict[str, Any] = {
         f"{BASE}/points/{POINT}": POINTS,
         stations_url(): STATIONS,
-        latest_url("KATT"): OBSERVATION,
-        latest_url("KAUS"): OBSERVATION,
+        obs_url("KATT"): OBSERVATION,
+        obs_url("KAUS"): OBSERVATION,
     }
     session = FakeSession(routes)
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -332,7 +352,7 @@ async def test_stations_url_failure_is_retried(monkeypatch, clock):
         f"{BASE}/points/{POINT}": POINTS,
         # the point is valid, the gridpoint endpoint is just flaky
         stations_url(): 404,
-        latest_url("KATT"): OBSERVATION,
+        obs_url("KATT"): OBSERVATION,
     }
     session = FakeSession(routes)
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -351,7 +371,7 @@ async def test_invalid_is_retried_after_backoff(monkeypatch, clock):
     session = FakeSession(
         {
             f"{BASE}/stations/KBNA": station("KBNA", "Nashville International"),
-            latest_url("KBNA"): OBSERVATION,
+            obs_url("KBNA"): OBSERVATION,
             f"{BASE}/stations/KZZZ": 404,
             f"{BASE}/stations/KRETRY": 503,
             f"{BASE}/stations/KSLOW": 429,
@@ -414,8 +434,8 @@ async def test_overlapping_collections_do_not_mix(monkeypatch):
         {
             f"{BASE}/stations/KAUS": STATION,
             f"{BASE}/stations/KATT": station("KATT", "Austin Camp Mabry"),
-            latest_url("KAUS"): OBSERVATION,
-            latest_url("KATT"): OBSERVATION,
+            obs_url("KAUS"): OBSERVATION,
+            obs_url("KATT"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -429,8 +449,23 @@ async def test_overlapping_collections_do_not_mix(monkeypatch):
         group.start_soon(collect)
 
     for metrics in results:
-        temps = [s for m in metrics for s in m.samples if s.name == "nws_temperature_f"]
-        assert len(temps) == 2
+        stamps = [
+            s
+            for m in metrics
+            for s in m.samples
+            if s.name.endswith("_timestamp_seconds")
+        ]
+        assert len(stamps) == 2
+
+    # each observation is exported once, by whichever collection ran first
+    temps = [
+        s.labels["station_id"]
+        for metrics in results
+        for m in metrics
+        for s in m.samples
+        if s.name == "nws_temperature_f"
+    ]
+    assert sorted(temps) == ["KATT", "KAUS"]
 
 
 def test_config_validation(monkeypatch):
@@ -481,3 +516,158 @@ async def test_setup_nws(monkeypatch, caplog, env, enabled):
     # validation errors don't echo the configured location
     assert "30.2" not in caplog.text
     assert "97.7" not in caplog.text
+
+
+def history(*observations: dict[str, Any]) -> dict[str, Any]:
+    return {"features": list(observations)}
+
+
+def at(ts: str, **overrides: Any) -> dict[str, Any]:
+    return observation(timestamp=f"2026-09-26T{ts}:00+00:00", **overrides)
+
+
+def pending(ts: str) -> dict[str, Any]:
+    # How mesonet stations publish a record before QC fills it in
+    return at(
+        ts,
+        **{
+            field: qv(unit, None, qc="Z")
+            for field, unit in [
+                ("temperature", "degC"),
+                ("dewpoint", "degC"),
+                ("windDirection", "degree_(angle)"),
+                ("windSpeed", "km_h-1"),
+                ("windGust", "km_h-1"),
+                ("barometricPressure", "Pa"),
+                ("seaLevelPressure", "Pa"),
+                ("visibility", "m"),
+                ("precipitationLastHour", "mm"),
+                ("relativeHumidity", "percent"),
+                ("windChill", "degC"),
+                ("heatIndex", "degC"),
+            ]
+        },
+    )
+
+
+def temperatures(metrics) -> list[tuple[float | None, float]]:
+    return [
+        (s.timestamp, s.value)
+        for m in metrics
+        for s in m.samples
+        if s.name == "nws_temperature_f"
+    ]
+
+
+def ts(hhmm: str) -> float:
+    return datetime.fromisoformat(f"2026-09-26T{hhmm}:00+00:00").timestamp()
+
+
+@pytest.mark.asyncio
+async def test_exports_each_qcd_observation_once(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    routes: dict[str, Any] = {
+        f"{BASE}/stations/KAUS": STATION,
+        # the API returns newest first
+        obs_url("KAUS"): history(
+            at("15:50", temperature=qv("degC", 20.0)),
+            at("15:45", temperature=qv("degC", 15.0)),
+            at("15:40", temperature=qv("degC", 10.0)),
+        ),
+    }
+    session = FakeSession(routes)
+    collector = NwsMetricCollector(session)  # type: ignore[arg-type]
+
+    metrics = list(await collector.perform_collection())
+    # every observation, oldest first, each at its own time
+    assert temperatures(metrics) == [
+        (ts("15:40"), pytest.approx(50.0)),
+        (ts("15:45"), pytest.approx(59.0)),
+        (ts("15:50"), pytest.approx(68.0)),
+    ]
+    assert samples(metrics)[("KAUS", "nws_observation_timestamp_seconds")] == ts(
+        "15:50"
+    )
+
+    # nothing new: no measurements, but the staleness gauge stays
+    metrics = list(await collector.perform_collection())
+    assert not temperatures(metrics)
+    assert samples(metrics)[("KAUS", "nws_observation_timestamp_seconds")] == ts(
+        "15:50"
+    )
+
+    # only the new observation is exported
+    routes[obs_url("KAUS")]["features"].insert(
+        0, at("15:55", temperature=qv("degC", 25.0))
+    )
+    metrics = list(await collector.perform_collection())
+    assert temperatures(metrics) == [(ts("15:55"), pytest.approx(77.0))]
+
+    # the start of the window is rounded down to 5 minutes, an hour back
+    assert session.requests[-1] == f"{obs_url('KAUS')}?start=2026-09-26T15:05:00Z"
+
+
+@pytest.mark.asyncio
+async def test_waits_for_qc_before_exporting_newer_observations(monkeypatch, now):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    routes: dict[str, Any] = {
+        f"{BASE}/stations/KAUS": STATION,
+        obs_url("KAUS"): history(
+            at("16:00"),
+            pending("15:55"),
+            at("15:50"),
+        ),
+    }
+    collector = NwsMetricCollector(FakeSession(routes))  # type: ignore[arg-type]
+
+    # 15:55 is still waiting on QC, so 16:00 is held back
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:50")]
+    assert samples(metrics)[("KAUS", "nws_observation_timestamp_seconds")] == ts(
+        "15:50"
+    )
+
+    # once it's QC'd, both are exported in order
+    routes[obs_url("KAUS")] = history(at("16:00"), at("15:55"), at("15:50"))
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]
+
+    # a record that never gets QC'd stops holding back newer ones after the grace
+    routes[obs_url("KAUS")] = history(at("16:10"), pending("16:05"), at("16:00"))
+    assert not temperatures(await collector.perform_collection())
+    now[0] = datetime.fromisoformat("2026-09-26T16:05:00+00:00") + nws.PENDING_GRACE
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("16:10")]
+
+
+@pytest.mark.asyncio
+async def test_partially_pending_observation_counts_as_qcd(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    session = FakeSession(
+        {
+            f"{BASE}/stations/KAUS": STATION,
+            obs_url("KAUS"): history(
+                at("16:00"),
+                # e.g. a METAR whose dewpoint never gets QC'd
+                at("15:55", dewpoint=qv("degC", None, qc="Z")),
+            ),
+        }
+    )
+    collector = NwsMetricCollector(session)  # type: ignore[arg-type]
+
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]
+
+
+@pytest.mark.asyncio
+async def test_no_qcd_observations_yet(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    session = FakeSession(
+        {
+            f"{BASE}/stations/KAUS": STATION,
+            obs_url("KAUS"): history(pending("16:05")),
+        }
+    )
+    collector = NwsMetricCollector(session)  # type: ignore[arg-type]
+
+    assert not list(await collector.perform_collection())
