@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Self
 
 import anyio
-from aiohttp import ClientSession
+from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -28,6 +28,11 @@ class NwsConfig(BaseSettings):
     latitude: float | None = None
     longitude: float | None = None
     nearest_stations: int = Field(1, ge=1)
+    # Per-request timeout in seconds. The shared session otherwise allows 300s, and a
+    # hung request would stall the whole scrape past Prometheus' scrape timeout.
+    # Resolving a point costs 2 sequential requests before the observation fetch,
+    # so the worst case scrape is 3x this.
+    timeout: float = Field(5, gt=0)
     # api.weather.gov requires a User-Agent identifying the application,
     # ideally with contact info: https://www.weather.gov/documentation/services-web-api
     user_agent: str = "smart-home-metrics (github.com/clarkperkins/smart-home-metrics)"
@@ -109,6 +114,27 @@ CONVERSIONS: dict[str, tuple[str, Callable[[float], float]]] = {
 }
 
 
+def _is_permanent(exc: Exception) -> bool:
+    """
+    A 4xx means the station or point itself is bad (e.g. a typo in NWS_STATIONS), so
+    retrying it on every scrape would only spam the logs. 408/429 are the exceptions:
+    the request was fine, the API just wants us to back off.
+    """
+    return (
+        isinstance(exc, ClientResponseError)
+        and 400 <= exc.status < 500
+        and exc.status not in (408, 429)
+    )
+
+
+def _log_failure(action: str, exc: Exception):
+    # Expected HTTP/network failures get a one-liner; anything else keeps the traceback
+    if isinstance(exc, (ClientError, TimeoutError)):
+        logger.warning("Failed to %s: %s", action, str(exc) or type(exc).__name__)
+    else:
+        logger.warning("Failed to %s", action, exc_info=exc)
+
+
 class NwsMetricCollector(MetricCollector):
     label_names = [
         "station_id",
@@ -122,18 +148,22 @@ class NwsMetricCollector(MetricCollector):
     def __init__(self, session: ClientSession):
         super().__init__(session)
         self.config = NwsConfig()
+        self.timeout = ClientTimeout(total=self.config.timeout)
         self.headers = {
             "User-Agent": self.config.user_agent,
             "Accept": "application/geo+json",
         }
         # Resolved lazily and cached rather than in initialize(), so an API outage
         # at startup doesn't take down the whole service. Entries that fail to
-        # resolve are retried on the next scrape.
+        # resolve are retried on the next scrape, unless the API says they don't exist.
         self.stations: dict[str, Station] = {}
+        self.invalid_stations: set[str] = set()
         self.point_resolved = not self.config.has_point
 
     async def _get_json(self, url: str) -> Any:
-        async with self.session.get(url, headers=self.headers) as r:
+        async with self.session.get(
+            url, headers=self.headers, timeout=self.timeout
+        ) as r:
             r.raise_for_status()
             return await r.json(content_type=None)
 
@@ -148,12 +178,16 @@ class NwsMetricCollector(MetricCollector):
             data = await self._get_json(f"{BASE_URL}/stations/{station_id}")
             self._cache_station(data["properties"])
         except Exception as exc:
-            logger.warning("Failed to resolve NWS station %s", station_id, exc_info=exc)
+            if _is_permanent(exc):
+                logger.error("Ignoring NWS station %s: %s", station_id, exc)
+                self.invalid_stations.add(station_id)
+            else:
+                _log_failure(f"resolve NWS station {station_id}", exc)
 
     async def _resolve_point(self):
+        # /points only accepts up to 4 decimal places
+        point = f"{self.config.latitude:.4f},{self.config.longitude:.4f}"
         try:
-            # /points only accepts up to 4 decimal places
-            point = f"{self.config.latitude:.4f},{self.config.longitude:.4f}"
             points = await self._get_json(f"{BASE_URL}/points/{point}")
             stations = await self._get_json(points["properties"]["observationStations"])
             # Stations are ordered by distance from the point
@@ -161,12 +195,20 @@ class NwsMetricCollector(MetricCollector):
                 self._cache_station(feature["properties"])
             self.point_resolved = True
         except Exception as exc:
-            logger.warning("Failed to resolve NWS stations for point", exc_info=exc)
+            if _is_permanent(exc):
+                # e.g. a point outside NWS coverage
+                logger.error("Ignoring NWS point %s: %s", point, exc)
+                self.point_resolved = True
+            else:
+                _log_failure(f"resolve NWS stations for point {point}", exc)
 
     async def _resolve_stations(self):
         async with anyio.create_task_group() as group:
             for station_id in self.config.stations:
-                if station_id not in self.stations:
+                if (
+                    station_id not in self.stations
+                    and station_id not in self.invalid_stations
+                ):
                     group.start_soon(self._resolve_station, station_id)
             if not self.point_resolved:
                 group.start_soon(self._resolve_point)
@@ -201,9 +243,7 @@ class NwsMetricCollector(MetricCollector):
             )
             obs = ObservationResponse.model_validate(data).properties
         except Exception as exc:
-            logger.warning(
-                "Failed to fetch NWS observation for %s", station.id, exc_info=exc
-            )
+            _log_failure(f"fetch NWS observation for {station.id}", exc)
             return
 
         labels = [station.id, station.name]

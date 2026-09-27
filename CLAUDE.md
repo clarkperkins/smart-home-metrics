@@ -136,6 +136,7 @@ All collectors use `pydantic-settings` for environment-based configuration:
   - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest stations resolved via `/points`)
   - `NWS_NEAREST_STATIONS` (how many of the closest stations to the point to use, default 1)
   - `NWS_USER_AGENT` (required by NWS; defaults to the project name/URL, add contact info)
+  - `NWS_TIMEOUT` (per-request timeout in seconds, default 5; keeps a hung API from stalling the whole scrape)
 
 ### Ecobee Token Management
 

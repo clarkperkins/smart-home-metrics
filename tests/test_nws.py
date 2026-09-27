@@ -1,6 +1,9 @@
 from typing import Any
 
 import pytest
+from aiohttp import ClientResponseError, ClientTimeout, RequestInfo
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from shm.collectors.nws import NwsMetricCollector
 
@@ -47,7 +50,8 @@ OBSERVATION = {
 
 
 class FakeResponse:
-    def __init__(self, data: Any):
+    def __init__(self, url: str, data: Any):
+        self.url = url
         self.data = data
 
     async def __aenter__(self):
@@ -59,6 +63,10 @@ class FakeResponse:
     def raise_for_status(self):
         if self.data is None:
             raise RuntimeError("404")
+        if isinstance(self.data, int):
+            url = URL(self.url)
+            info = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+            raise ClientResponseError(info, (), status=self.data)
 
     async def json(self, content_type=None):
         return self.data
@@ -69,10 +77,11 @@ class FakeSession:
         self.routes = routes
         self.requests: list[str] = []
 
-    def get(self, url: str, headers=None):
+    def get(self, url: str, headers=None, timeout=None):
         assert headers and "User-Agent" in headers
+        assert isinstance(timeout, ClientTimeout) and timeout.total
         self.requests.append(url)
-        return FakeResponse(self.routes.get(url))
+        return FakeResponse(url, self.routes.get(url))
 
 
 def samples(metrics) -> dict[tuple[str, str], float]:
@@ -180,6 +189,36 @@ async def test_resolve_nearest_stations_from_point(monkeypatch):
 
     await collector.perform_collection()
     assert session.requests.count(f"{BASE}/points/30.2672,-97.7431") == 1
+
+
+@pytest.mark.asyncio
+async def test_not_found_is_not_retried(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KBNA,KZZZ,KRETRY,KSLOW")
+    monkeypatch.setenv("NWS_LATITUDE", "51.5072")
+    monkeypatch.setenv("NWS_LONGITUDE", "-0.1276")
+    session = FakeSession(
+        {
+            f"{BASE}/stations/KBNA": station("KBNA", "Nashville International"),
+            f"{BASE}/stations/KBNA/observations/latest": OBSERVATION,
+            f"{BASE}/stations/KZZZ": 404,
+            f"{BASE}/stations/KRETRY": 503,
+            f"{BASE}/stations/KSLOW": 429,
+            # outside NWS coverage
+            f"{BASE}/points/51.5072,-0.1276": 404,
+        }
+    )
+    collector = NwsMetricCollector(session)  # type: ignore[arg-type]
+
+    values = samples(await collector.perform_collection())
+    await collector.perform_collection()
+
+    assert {station_id for station_id, _ in values} == {"KBNA"}
+    # 4xx means the config is wrong, so give up rather than retrying forever
+    assert session.requests.count(f"{BASE}/stations/KZZZ") == 1
+    assert session.requests.count(f"{BASE}/points/51.5072,-0.1276") == 1
+    # server errors and rate limits are transient
+    assert session.requests.count(f"{BASE}/stations/KRETRY") == 2
+    assert session.requests.count(f"{BASE}/stations/KSLOW") == 2
 
 
 def test_requires_location():
