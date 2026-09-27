@@ -2,6 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 
+import anyio
 from aiohttp import ClientSession
 from prometheus_client import Metric
 from prometheus_client.core import GaugeMetricFamily, StateSetMetricFamily
@@ -17,6 +18,8 @@ class MetricCollector(ABC):
         self._check_labels()
         self.session = session
         self.metrics: dict[str, Metric] = {}
+        # Overlapping scrapes would otherwise share (and reset) self.metrics
+        self._collection_lock = anyio.Lock()
 
     def _check_labels(self):
         if self.label_names is None:
@@ -71,19 +74,20 @@ class MetricCollector(ABC):
         Just a wrapper around the collect_metrics() method to catch any exceptions.
         You shouldn't need to override this method in most cases.
         """
-        try:
-            self.metrics = {}
+        async with self._collection_lock:
+            try:
+                self.metrics = {}
 
-            await self.collect_metrics()
+                await self.collect_metrics()
 
-            metrics = map(lambda x: x[1], sorted(self.metrics.items()))
+                metrics = map(lambda x: x[1], sorted(self.metrics.items()))
 
-            self.metrics = {}
+                self.metrics = {}
 
-            return metrics
-        except Exception as exc:
-            logger.warning("Metric collection failed", exc_info=exc)
-            return []
+                return metrics
+            except Exception as exc:
+                logger.warning("Metric collection failed", exc_info=exc)
+                return []
 
     @abstractmethod
     async def collect_metrics(self):

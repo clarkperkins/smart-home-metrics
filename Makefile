@@ -8,24 +8,24 @@ reports:
 	mkdir -p reports/tests
 
 format/isort:
-	poetry run isort shm
+	poetry run isort shm tests
 
 format/black:
-	poetry run black shm
+	poetry run black shm tests
 
 format: format/isort format/black
 
 check/isort:
-	poetry run isort shm --check
+	poetry run isort shm tests --check
 
 check/black:
-	poetry run black shm --check
+	poetry run black shm tests --check
 
 check/pylint:
 	poetry run pylint shm --reports=n --fail-under=0 --fail-on=E
 
 check/mypy:
-	poetry run mypy shm
+	poetry run mypy shm tests
 
 check: check/isort check/black check/pylint check/mypy
 

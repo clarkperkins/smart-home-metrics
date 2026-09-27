@@ -55,6 +55,9 @@ spec:
               value: {{ .Release.Namespace }}
             - name: ECOBEE_TOKEN_STORE_K8S_SECRET_NAME
               value: {{ include "smart-home-metrics.fullname" . }}-ecobee-tokens
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "smart-home-metrics.fullname" . }}

@@ -131,12 +131,14 @@ All collectors use `pydantic-settings` for environment-based configuration:
   - `ECOBEE_TOKEN_STORE_FILE_PATH` (default: ecobee.json)
   - `ECOBEE_TOKEN_STORE_K8S_NAMESPACE`
   - `ECOBEE_TOKEN_STORE_K8S_SECRET_NAME`
-- **NWS** (only enabled when `NWS_STATIONS` or `NWS_LATITUDE` is set; both may be combined):
+- **NWS** (opt-in: enabled when `NWS_STATIONS` or `NWS_LATITUDE`/`NWS_LONGITUDE` is set; both may be combined. An invalid NWS config skips just this collector):
   - `NWS_STATIONS` (comma-separated observation station IDs, e.g. `KAUS,KATT`)
-  - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest stations resolved via `/points`)
+  - `NWS_LATITUDE` / `NWS_LONGITUDE` (nearest stations resolved via `/points`, re-resolved daily; never logged)
   - `NWS_NEAREST_STATIONS` (how many of the closest stations to the point to use, default 1)
   - `NWS_USER_AGENT` (required by NWS; defaults to the project name/URL, add contact info)
-  - `NWS_TIMEOUT` (per-request timeout in seconds, default 5; keeps a hung API from stalling the whole scrape)
+  - `NWS_TIMEOUT` (per-request timeout in seconds, default 5, max 9 so 3 sequential requests fit in the 30s scrape timeout)
+
+Non-secret settings can be passed via the chart's `extraEnv` value; secrets go in the chart's Secret (loaded with `envFrom`).
 
 ### Ecobee Token Management
 
@@ -153,6 +155,8 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 3. **Revision tracking**: Ecobee collector uses revision IDs to only fetch changed data
 4. **Label consistency**: Each collector defines a fixed set of labels for all its metrics
 5. **Error isolation**: Individual collector failures don't crash the entire scrape
+6. **Bounded requests**: The shared `ClientSession` has a 10s default per-request timeout so a hung API can't stall the scrape past Prometheus' 30s timeout
+7. **Serialized collection**: `perform_collection()` holds a per-collector lock, since overlapping scrapes would otherwise share `self.metrics`
 
 ## Deployment
 
@@ -160,7 +164,7 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 
 **Build** (.github/workflows/build.yml):
 - Runs on all branches and PRs
-- Executes `make check` (isort, black, pylint, mypy)
+- Executes `make check` (isort, black, pylint, mypy) and `make test`
 - Docker metadata generation for versioning
 
 **Deploy** (.github/workflows/deploy.yml):
@@ -201,5 +205,5 @@ The service is deployed via Helm chart (charts/smart-home-metrics/):
    ```
 3. Implement configuration with `pydantic_settings.BaseSettings`
 4. Implement `async def collect_metrics(self)` using `self.get_gauge()` / `self.get_enum()`
-5. Add to `shm/metrics.py:27-36` in `setup_collectors()`
-6. Add environment variables to Helm chart values/secrets
+5. Add to `setup_collectors()` in `shm/metrics.py`
+6. Add environment variables to the Helm chart: `extraEnv` for plain settings, the chart Secret for credentials
