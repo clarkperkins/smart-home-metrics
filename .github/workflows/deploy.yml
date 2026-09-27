@@ -12,6 +12,10 @@ jobs:
   build:
     name: Build
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      # Publish Test Results in build.yml creates a check run
+      checks: write
 
   docker-amd64:
     name: Docker Build & Push (AMD64)
