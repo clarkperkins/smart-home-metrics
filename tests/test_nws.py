@@ -42,6 +42,10 @@ def stations_url(limit: int = 1) -> str:
     return f"{POINTS['properties']['observationStations']}?limit={limit}"
 
 
+def latest_url(station: str) -> str:
+    return f"{BASE}/stations/{station}/observations/latest?require_qc=true"
+
+
 def qv(unit: str, value: float | None, qc: str = "V") -> dict[str, Any]:
     return {"unitCode": f"wmoUnit:{unit}", "value": value, "qualityControl": qc}
 
@@ -154,7 +158,7 @@ async def test_collect_by_station(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/KAUS": STATION,
-            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
+            latest_url("KAUS"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -190,7 +194,7 @@ async def test_units_and_quality_control(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/KAUS": STATION,
-            f"{BASE}/stations/KAUS/observations/latest": observation(
+            latest_url("KAUS"): observation(
                 # rejected by QC
                 temperature=qv("degC", 60.0, qc="X"),
                 # questionable values are still exported
@@ -225,8 +229,8 @@ async def test_multiple_stations_isolate_failures(monkeypatch):
             f"{BASE}/stations/KAUS": STATION,
             f"{BASE}/stations/KATT": station("KATT", "Austin Camp Mabry"),
             f"{BASE}/stations/KEDC": station("KEDC", "Austin Executive"),
-            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
-            f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
+            latest_url("KAUS"): OBSERVATION,
+            latest_url("KATT"): OBSERVATION,
             # KBAD fails transiently, KEDC resolves but its observation fails
             f"{BASE}/stations/KBAD": 503,
         }
@@ -253,7 +257,7 @@ async def test_configured_id_differs_from_station_identifier(monkeypatch):
     session = FakeSession(
         {
             f"{BASE}/stations/OLDID": station("NEWID", "Renamed"),
-            f"{BASE}/stations/NEWID/observations/latest": OBSERVATION,
+            latest_url("NEWID"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -275,9 +279,9 @@ async def test_resolve_nearest_stations_from_point(monkeypatch):
             f"{BASE}/points/{POINT}": POINTS,
             stations_url(2): STATIONS,
             f"{BASE}/stations/KAUS": STATION,
-            f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
-            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
-            f"{BASE}/stations/KEDC/observations/latest": OBSERVATION,
+            latest_url("KATT"): OBSERVATION,
+            latest_url("KAUS"): OBSERVATION,
+            latest_url("KEDC"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -286,7 +290,7 @@ async def test_resolve_nearest_stations_from_point(monkeypatch):
 
     # nearest 2 from the point, deduplicated against the explicit KAUS
     assert {station_id for station_id, _ in values} == {"KATT", "KAUS"}
-    assert session.requests.count(f"{BASE}/stations/KAUS/observations/latest") == 1
+    assert session.requests.count(latest_url("KAUS")) == 1
 
     await collector.perform_collection()
     assert session.requests.count(f"{BASE}/points/{POINT}") == 1
@@ -298,8 +302,8 @@ async def test_point_is_re_resolved_daily(monkeypatch, clock):
     routes: dict[str, Any] = {
         f"{BASE}/points/{POINT}": POINTS,
         stations_url(): STATIONS,
-        f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
-        f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
+        latest_url("KATT"): OBSERVATION,
+        latest_url("KAUS"): OBSERVATION,
     }
     session = FakeSession(routes)
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -323,7 +327,7 @@ async def test_stations_url_failure_is_retried(monkeypatch, clock):
         f"{BASE}/points/{POINT}": POINTS,
         # the point is valid, the gridpoint endpoint is just flaky
         stations_url(): 404,
-        f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
+        latest_url("KATT"): OBSERVATION,
     }
     session = FakeSession(routes)
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
@@ -342,7 +346,7 @@ async def test_invalid_is_retried_after_backoff(monkeypatch, clock):
     session = FakeSession(
         {
             f"{BASE}/stations/KBNA": station("KBNA", "Nashville International"),
-            f"{BASE}/stations/KBNA/observations/latest": OBSERVATION,
+            latest_url("KBNA"): OBSERVATION,
             f"{BASE}/stations/KZZZ": 404,
             f"{BASE}/stations/KRETRY": 503,
             f"{BASE}/stations/KSLOW": 429,
@@ -405,8 +409,8 @@ async def test_overlapping_collections_do_not_mix(monkeypatch):
         {
             f"{BASE}/stations/KAUS": STATION,
             f"{BASE}/stations/KATT": station("KATT", "Austin Camp Mabry"),
-            f"{BASE}/stations/KAUS/observations/latest": OBSERVATION,
-            f"{BASE}/stations/KATT/observations/latest": OBSERVATION,
+            latest_url("KAUS"): OBSERVATION,
+            latest_url("KATT"): OBSERVATION,
         }
     )
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]

@@ -344,8 +344,10 @@ class NwsMetricCollector(MetricCollector):
     async def _collect_station(self, station: Station):
         # Isolate failures so one flaky station doesn't drop the others
         try:
+            # Without require_qc the API strips the latest observation for
+            # mesonet (non-METAR) stations down to just the wind gust
             data = await self._get_json(
-                f"{BASE_URL}/stations/{station.id}/observations/latest"
+                f"{BASE_URL}/stations/{station.id}/observations/latest?require_qc=true"
             )
             obs = ObservationResponse.model_validate(data).properties
         except Exception as exc:
