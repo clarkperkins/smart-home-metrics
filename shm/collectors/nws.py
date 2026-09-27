@@ -314,7 +314,12 @@ class NwsMetricCollector(MetricCollector):
                 group.start_soon(self._resolve_point)
 
     def _add(
-        self, name: str, value: QuantitativeValue | None, unit: str, labels: list[str]
+        self,
+        name: str,
+        value: QuantitativeValue | None,
+        unit: str,
+        labels: list[str],
+        timestamp: float,
     ):
         # NWS reports null for anything the station didn't measure (e.g. heat index in winter)
         if value is None or value.value is None:
@@ -329,7 +334,9 @@ class NwsMetricCollector(MetricCollector):
             logger.warning("Unexpected NWS unit %s for %s", value.unit_code, name)
             return
 
-        self.get_gauge(f"{self.prefix}_{name}", unit).add_metric(labels, converted)
+        self.get_gauge(f"{self.prefix}_{name}", unit).add_metric(
+            labels, converted, timestamp
+        )
 
     async def collect_metrics(self):
         await self._resolve_stations()
@@ -355,13 +362,18 @@ class NwsMetricCollector(MetricCollector):
             return
 
         labels = [station.id, station.name]
+        observed_at = obs.timestamp.timestamp()
 
-        # Stations typically report hourly, so expose the observation time for staleness checks
+        # Stations typically report hourly, so expose the observation time for staleness
+        # checks. This one is left at scrape time so it's always current in instant queries.
         self.get_gauge(
             f"{self.prefix}_observation_timestamp",
             "seconds",
             "Time of the latest NWS observation",
-        ).add_metric(labels, obs.timestamp.timestamp())
+        ).add_metric(labels, observed_at)
 
+        # Measurements carry the observation time rather than the scrape time, so
+        # the (often 10-60 min old) values land at the time they were observed.
+        # Instant queries only look back 5m, so query them with last_over_time().
         for name, field, unit in FIELDS:
-            self._add(name, getattr(obs, field), unit, labels)
+            self._add(name, getattr(obs, field), unit, labels, observed_at)

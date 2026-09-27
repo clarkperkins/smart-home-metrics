@@ -137,6 +137,7 @@ All collectors use `pydantic-settings` for environment-based configuration:
   - `NWS_NEAREST_STATIONS` (how many of the closest stations to the point to use, default 1)
   - `NWS_USER_AGENT` (required by NWS; defaults to the project name/URL, add contact info)
   - `NWS_TIMEOUT` (per-request timeout in seconds, default 5, max 9 so 3 sequential requests fit in the 30s scrape timeout)
+  - Observations come from `/observations/latest?require_qc=true` (without it the API often returns a record with every field null). Measurement samples carry the observation's timestamp, not the scrape time, so query them with `last_over_time(nws_...[90m])`; instant queries only look back 5m. `nws_observation_timestamp_seconds` keeps the scrape time for staleness checks. Observations older than Mimir's accepted window (~1h head window, or `out_of_order_time_window` if larger) are discarded as `sample-too-old`.
 
 Non-secret settings can be passed via the chart's `extraEnv` value; secrets go in the chart's Secret (loaded with `envFrom`).
 
