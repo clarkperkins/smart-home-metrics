@@ -162,16 +162,15 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 
 ### CI/CD Pipeline
 
-**Build** (.github/workflows/build.yml):
-- Runs on all branches and PRs
+**Build** (.github/workflows/build.yml, reusable; called by pull-requests.yml and deploy.yml):
 - Executes `make check` (isort, black, pylint, mypy) and `make test`
-- Docker metadata generation for versioning
+- Docker metadata + version in a `docker-meta` job
+- Native per-arch matrix builds (amd64 on `ubuntu-24.04`, arm64 on `ubuntu-24.04-arm`) pushed by digest to `ghcr.io/clarkperkins/shm`, then merged into one manifest list with all tags (`pr-N` on PRs)
+- Dependabot and fork PRs build the image but skip the push, cache write and manifest (read-only token)
 
 **Deploy** (.github/workflows/deploy.yml):
 - Triggers on `main` branch push and tags
-- Builds multi-arch Docker images (linux/amd64, linux/arm64)
-- Pushes to `ghcr.io/clarkperkins/shm`
-- Packages and pushes Helm chart to `ghcr.io/clarkperkins`
+- Runs the Build workflow (which pushes the image), then packages and pushes the Helm chart to `ghcr.io/clarkperkins`
 
 ### Kubernetes Deployment
 
