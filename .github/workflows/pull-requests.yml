@@ -15,3 +15,5 @@ jobs:
       contents: read
       # Publish Test Results in build.yml creates a check run
       checks: write
+      # Docker jobs in build.yml push pr-N images to GHCR
+      packages: write
