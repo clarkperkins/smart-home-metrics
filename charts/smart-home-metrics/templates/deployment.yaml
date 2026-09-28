@@ -38,16 +38,15 @@ spec:
             - name: http-metrics
               containerPort: 9000
               protocol: TCP
-          livenessProbe:
+          {{- range $probe := list "startupProbe" "livenessProbe" "readinessProbe" }}
+          {{- with index $.Values $probe }}
+          {{ $probe }}:
             httpGet:
               path: /health
               port: http-metrics
-            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http-metrics
-            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
           env:
             - name: ECOBEE_TOKEN_STORE_TYPE
               value: kubernetes
