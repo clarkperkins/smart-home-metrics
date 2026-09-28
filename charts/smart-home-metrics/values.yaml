@@ -37,11 +37,24 @@ securityContext: {}
   # runAsNonRoot: true
   # runAsUser: 1000
 
+# All three probes hit /health. Set any of them to null to drop it.
+# Startup can take over a minute on a busy node, so the startup probe allows up to
+# 5 minutes; liveness and readiness don't run until it passes.
+startupProbe:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+# Tolerates a minute of slow responses (e.g. under disk pressure) before restarting
 livenessProbe:
-  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
 
 readinessProbe:
-  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
 
 service:
   type: ClusterIP

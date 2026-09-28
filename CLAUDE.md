@@ -178,7 +178,7 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 
 The service is deployed via Helm chart (charts/smart-home-metrics/):
 - **ServiceMonitor**: Prometheus scrapes metrics every 60s with 30s timeout
-- **Probes**: Liveness/readiness probes on `/health` with 60s initial delay
+- **Probes**: Startup, liveness and readiness probes on `/health`, each configurable (or disabled with `null`) in values. Startup can take over a minute on a busy node, so the startup probe allows 5 minutes before liveness/readiness start; liveness tolerates a minute of slow (5s timeout) responses before restarting
 - **ServiceAccount**: Required for Kubernetes API access (Ecobee token storage)
 - **Port**: Listens on 9000, exposed as ClusterIP service on port 80
 
