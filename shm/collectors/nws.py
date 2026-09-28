@@ -277,8 +277,12 @@ class NwsMetricCollector(MetricCollector):
         self.invalid_until: dict[str, float] = {}
         self.point_stations: list[Station] = []
         self.point_expires = 0.0
-        # Newest observation exported per station, so each is only exported once
-        self.last_exported: dict[str, datetime] = {}
+        # Newest value exported per (station, field), so each is only exported once.
+        # Tracked per field because a field can fill in after the rest of its record
+        # (e.g. a METAR whose dewpoint is QC'd later) and still needs exporting.
+        self.last_exported: dict[tuple[str, str], datetime] = {}
+        # Newest QC'd observation per station, for the staleness gauge
+        self.newest: dict[str, datetime] = {}
 
     async def _get_json(self, url: str) -> Any:
         async with self.session.get(
@@ -366,23 +370,25 @@ class NwsMetricCollector(MetricCollector):
         unit: str,
         labels: list[str],
         timestamp: float,
-    ):
+    ) -> bool:
+        """Returns whether a sample was exported"""
         # NWS reports null for anything the station didn't measure (e.g. heat index in winter)
         if value is None or value.value is None:
-            return
+            return False
 
         # Values that failed QC are dropped; questionable ones (Q/B) are still exported
         if value.quality_control == QC_REJECTED:
-            return
+            return False
 
         converted = _convert(value.value, value.unit_code, unit)
         if converted is None:
             logger.warning("Unexpected NWS unit %s for %s", value.unit_code, name)
-            return
+            return False
 
         self.get_gauge(f"{self.prefix}_{name}", unit).add_metric(
             labels, converted, timestamp
         )
+        return True
 
     async def collect_metrics(self):
         await self._resolve_stations()
@@ -420,15 +426,10 @@ class NwsMetricCollector(MetricCollector):
             return
 
         ready = _ready(observations, _now())
-        last = self.last_exported.get(station.id)
-        # Re-exporting older samples is harmless (the TSDB already has them) but the
-        # scraper logs every one it drops as out of order, so only export new ones.
-        # A scrape that fails after this loses those samples.
-        new = [obs for obs in ready if last is None or obs.timestamp > last]
-        newest = ready[-1].timestamp if ready else last
+        newest = ready[-1].timestamp if ready else self.newest.get(station.id)
         if newest is None:
             return
-        self.last_exported[station.id] = newest
+        self.newest[station.id] = newest
 
         labels = [station.id, station.name]
 
@@ -444,8 +445,18 @@ class NwsMetricCollector(MetricCollector):
         # the (often 10-60 min old) values land at the time they were observed.
         # Instant queries only look back 5m, so query them with last_over_time().
         # Each series' samples must be contiguous and in increasing time order.
+        # Re-exporting older samples is harmless (the TSDB already has them) but the
+        # scraper logs every one it drops as out of order, so only export new ones.
+        # A scrape that fails after this loses those samples.
         for name, field, unit in FIELDS:
-            for obs in new:
-                self._add(
+            key = (station.id, field)
+            last = self.last_exported.get(key)
+            for obs in ready:
+                if last is not None and obs.timestamp <= last:
+                    continue
+                # Only a value actually exported moves the field on, so one that's
+                # still null can be exported once it fills in
+                if self._add(
                     name, getattr(obs, field), unit, labels, obs.timestamp.timestamp()
-                )
+                ):
+                    self.last_exported[key] = obs.timestamp

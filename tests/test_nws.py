@@ -671,3 +671,33 @@ async def test_no_qcd_observations_yet(monkeypatch):
     collector = NwsMetricCollector(session)  # type: ignore[arg-type]
 
     assert not list(await collector.perform_collection())
+
+
+def dewpoints(metrics) -> list[float | None]:
+    return [
+        s.timestamp for m in metrics for s in m.samples if s.name == "nws_dewpoint_f"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_field_filled_in_later_is_still_exported(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    routes: dict[str, Any] = {
+        f"{BASE}/stations/KAUS": STATION,
+        obs_url("KAUS"): history(
+            at("16:00", dewpoint=qv("degC", None, qc="Z")),
+            at("15:55"),
+        ),
+    }
+    collector = NwsMetricCollector(FakeSession(routes))  # type: ignore[arg-type]
+
+    # the 16:00 record is QC'd apart from its dewpoint
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]
+    assert dewpoints(metrics) == [ts("15:55")]
+
+    # once the dewpoint fills in it's exported, without re-exporting the temperature
+    routes[obs_url("KAUS")] = history(at("16:00"), at("15:55"))
+    metrics = list(await collector.perform_collection())
+    assert not temperatures(metrics)
+    assert dewpoints(metrics) == [ts("16:00")]
