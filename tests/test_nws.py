@@ -722,3 +722,29 @@ async def test_screened_wind_gust_does_not_count_as_qcd(monkeypatch):
     routes[obs_url("KAUS")] = history(at("16:00"), at("15:55"), at("15:50"))
     metrics = list(await collector.perform_collection())
     assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]
+
+
+@pytest.mark.asyncio
+async def test_pending_temperature_holds_back_newer_observations(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    routes: dict[str, Any] = {
+        f"{BASE}/stations/KAUS": STATION,
+        obs_url("KAUS"): history(
+            at("16:00"),
+            # the rest of the record is QC'd, but its temperature isn't yet
+            at(
+                "15:55",
+                temperature=qv("degC", None, qc="Z"),
+                relativeHumidity=qv("percent", None, qc="Z"),
+            ),
+            at("15:50"),
+        ),
+    }
+    collector = NwsMetricCollector(FakeSession(routes))  # type: ignore[arg-type]
+
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:50")]
+
+    routes[obs_url("KAUS")] = history(at("16:00"), at("15:55"), at("15:50"))
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]
