@@ -526,28 +526,26 @@ def at(ts: str, **overrides: Any) -> dict[str, Any]:
     return observation(timestamp=f"2026-09-26T{ts}:00+00:00", **overrides)
 
 
-def pending(ts: str) -> dict[str, Any]:
+def pending(ts: str, **overrides: Any) -> dict[str, Any]:
     # How mesonet stations publish a record before QC fills it in
-    return at(
-        ts,
-        **{
-            field: qv(unit, None, qc="Z")
-            for field, unit in [
-                ("temperature", "degC"),
-                ("dewpoint", "degC"),
-                ("windDirection", "degree_(angle)"),
-                ("windSpeed", "km_h-1"),
-                ("windGust", "km_h-1"),
-                ("barometricPressure", "Pa"),
-                ("seaLevelPressure", "Pa"),
-                ("visibility", "m"),
-                ("precipitationLastHour", "mm"),
-                ("relativeHumidity", "percent"),
-                ("windChill", "degC"),
-                ("heatIndex", "degC"),
-            ]
-        },
-    )
+    fields = {
+        field: qv(unit, None, qc="Z")
+        for field, unit in [
+            ("temperature", "degC"),
+            ("dewpoint", "degC"),
+            ("windDirection", "degree_(angle)"),
+            ("windSpeed", "km_h-1"),
+            ("windGust", "km_h-1"),
+            ("barometricPressure", "Pa"),
+            ("seaLevelPressure", "Pa"),
+            ("visibility", "m"),
+            ("precipitationLastHour", "mm"),
+            ("relativeHumidity", "percent"),
+            ("windChill", "degC"),
+            ("heatIndex", "degC"),
+        ]
+    }
+    return at(ts, **{**fields, **overrides})
 
 
 def temperatures(metrics) -> list[tuple[float | None, float]]:
@@ -701,3 +699,26 @@ async def test_field_filled_in_later_is_still_exported(monkeypatch):
     metrics = list(await collector.perform_collection())
     assert not temperatures(metrics)
     assert dewpoints(metrics) == [ts("16:00")]
+
+
+@pytest.mark.asyncio
+async def test_screened_wind_gust_does_not_count_as_qcd(monkeypatch):
+    monkeypatch.setenv("NWS_STATIONS", "KAUS")
+    routes: dict[str, Any] = {
+        f"{BASE}/stations/KAUS": STATION,
+        obs_url("KAUS"): history(
+            at("16:00"),
+            # mesonet stations publish the gust before QC reaches the rest
+            pending("15:55", windGust=qv("km_h-1", 20.0, qc="S")),
+            at("15:50"),
+        ),
+    }
+    collector = NwsMetricCollector(FakeSession(routes))  # type: ignore[arg-type]
+
+    # 15:55 is still pending, so 16:00 is held back rather than exported ahead of it
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:50")]
+
+    routes[obs_url("KAUS")] = history(at("16:00"), at("15:55"), at("15:50"))
+    metrics = list(await collector.perform_collection())
+    assert [t for t, _ in temperatures(metrics)] == [ts("15:55"), ts("16:00")]

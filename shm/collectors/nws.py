@@ -172,6 +172,9 @@ FIELDS: list[tuple[str, str, str]] = [
 QC_REJECTED = "X"
 # MADIS quality control flag for values that haven't been QC'd yet
 QC_PENDING = "Z"
+# Fields that don't show whether QC has reached a record: mesonet stations publish
+# the wind gust already screened (S) while every other field is still pending
+QC_IGNORED_FIELDS = {"wind_gust"}
 
 
 def _now() -> datetime:
@@ -181,12 +184,17 @@ def _now() -> datetime:
 def _qc_pending(obs: Observation) -> bool:
     """
     QC hasn't reached this record yet. Mesonet stations publish records with every
-    field null and flagged Z, which fill in once QC runs. A record with only some
-    fields still at Z (e.g. a METAR without a dewpoint) has been QC'd.
+    field null and flagged Z (bar the wind gust, which arrives already screened),
+    which fill in once QC runs. A record with only some fields still at Z (e.g. a
+    METAR without a dewpoint) has been QC'd, and those fields rarely fill in later.
     """
     return not any(
         value is not None and value.quality_control not in (None, QC_PENDING)
-        for value in (getattr(obs, field) for _, field, _ in FIELDS)
+        for value in (
+            getattr(obs, field)
+            for _, field, _ in FIELDS
+            if field not in QC_IGNORED_FIELDS
+        )
     )
 
 
