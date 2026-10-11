@@ -5,7 +5,11 @@ from collections.abc import Iterable, Sequence
 import anyio
 from aiohttp import ClientSession
 from prometheus_client import Metric
-from prometheus_client.core import GaugeMetricFamily, StateSetMetricFamily
+from prometheus_client.core import (
+    CounterMetricFamily,
+    GaugeMetricFamily,
+    StateSetMetricFamily,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,30 @@ class MetricCollector(ABC):
                 key,
                 documentation or self.default_documentation,
                 labels=self.label_names,
+                unit=unit,
+            )
+            self.metrics[cache_key] = new
+            return new
+
+    def get_counter(
+        self,
+        key: str,
+        unit: str = "",
+        documentation: str | None = None,
+        extra_label_names: Sequence[str] = (),
+    ) -> CounterMetricFamily:
+        cache_key = f"{key}_{unit}" if unit else key
+        if cache_key in self.metrics:
+            metric = self.metrics[cache_key]
+            if isinstance(metric, CounterMetricFamily):
+                return metric
+            else:
+                raise ValueError(f"Metric {key} already added as a {type(metric)}")
+        else:
+            new = CounterMetricFamily(
+                key,
+                documentation or self.default_documentation,
+                labels=[*self.label_names, *extra_label_names],
                 unit=unit,
             )
             self.metrics[cache_key] = new
