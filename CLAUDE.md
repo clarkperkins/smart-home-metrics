@@ -150,6 +150,8 @@ The Ecobee collector (shm/collectors/ecobee.py) implements OAuth token managemen
 - **Caching**: Uses revision tracking to minimize API calls
 - **Authorization flow**: Displays PIN code for initial authorization
 
+Settings and extended runtime are only re-fetched when their revision changes, so (like runtime and remote sensors) they're carried over from the cached thermostat otherwise. `ecobee_equipment_runtime_seconds_total{equipment=...}` sums the extended runtime's 5-minute run seconds, counting each interval once (tracked by its end time, from `lastReadingTimestamp`); ecobee uploads them in 15-minute batches, so the counter lags by up to ~15 minutes (`ecobee_extended_runtime_timestamp_seconds` shows how far). The first batch after startup only sets the baseline, so a restart can lose but never double count intervals; query it with `increase()`.
+
 ### Key Design Patterns
 
 1. **Async-first**: All I/O operations use async/await with `anyio` for parallelism

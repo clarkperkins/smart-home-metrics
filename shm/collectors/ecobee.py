@@ -24,12 +24,14 @@ from pydantic_settings import BaseSettings
 from pyecobee import (
     EcobeeAuthorizationException,
     EcobeeService,
+    ExtendedRuntime,
     RemoteSensor,
     RemoteSensorCapability,
     Runtime,
     Scope,
     Selection,
     SelectionType,
+    Settings,
     Thermostat,
     Weather,
     WeatherForecast,
@@ -56,6 +58,29 @@ ALL_EQUIPMENT = [
     "compHotWater",
     "auxHotWater",
 ]
+
+# ExtendedRuntime attribute -> equipment name (as used by equipmentStatus)
+EXTENDED_RUNTIME_EQUIPMENT = {
+    "heat_pump1": "heatPump",
+    "heat_pump2": "heatPump2",
+    "aux_heat1": "auxHeat1",
+    "aux_heat2": "auxHeat2",
+    "aux_heat3": "auxHeat3",
+    "cool1": "compCool1",
+    "cool2": "compCool2",
+    "fan": "fan",
+    "humidifier": "humidifier",
+    "dehumidifier": "dehumidifier",
+    "economizer": "economizer",
+    "ventilator": "ventilator",
+}
+
+HVAC_MODES = ["auto", "auxHeatOnly", "cool", "heat", "off"]
+HUMIDIFIER_MODES = ["auto", "manual", "off"]
+DEHUMIDIFIER_MODES = ["on", "off"]
+
+# Each extended runtime array holds the last 3 five-minute intervals, oldest first
+RUNTIME_INTERVAL = timedelta(minutes=5)
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +328,11 @@ class EcobeeMetricCollector(MetricCollector):
         self._revisions: dict[str, Revisions] = {}
         self._cache: dict[str, Thermostat] = {}
 
+        # Equipment run seconds summed across extended runtime intervals, and
+        # the newest interval already summed, per thermostat
+        self._runtime_totals: dict[str, dict[str, int]] = {}
+        self._runtime_counted_until: dict[str, datetime] = {}
+
     async def initialize(self):
         await self.ecobee.initialize_tokens()
 
@@ -321,7 +351,26 @@ class EcobeeMetricCollector(MetricCollector):
         outdoor_humid = self.get_gauge("ecobee_outdoor_humidity", unit="pct")
         outdoor_dewpoint = self.get_gauge("ecobee_outdoor_dewpoint", unit="f")
 
+        desired_humid = self.get_gauge("ecobee_desired_humidity", unit="pct")
+        desired_dehumid = self.get_gauge("ecobee_desired_dehumidity", unit="pct")
+
         equipment_status = self.get_enum("ecobee_equipment_status")
+        equipment_runtime = self.get_counter(
+            "ecobee_equipment_runtime",
+            unit="seconds",
+            documentation="Ecobee equipment run time, summed from 5-minute intervals",
+            extra_label_names=["equipment"],
+        )
+        runtime_reading = self.get_gauge(
+            "ecobee_extended_runtime_timestamp",
+            unit="seconds",
+            documentation="End of the newest 5-minute interval in the extended runtime",
+        )
+
+        hvac_mode = self.get_enum("ecobee_hvac_mode")
+        humidifier_mode = self.get_enum("ecobee_humidifier_mode")
+        dehumidifier_mode = self.get_enum("ecobee_dehumidifier_mode")
+        dehumidify_with_ac = self.get_gauge("ecobee_dehumidify_with_ac")
 
         sensor_temp = self.get_gauge("ecobee_sensor_temperature", unit="f")
         sensor_occupancy = self.get_gauge("ecobee_sensor_occupancy")
@@ -427,6 +476,10 @@ class EcobeeMetricCollector(MetricCollector):
                     thermostat._runtime = old_thermostat.runtime
                 if not thermostat.remote_sensors:
                     thermostat._remote_sensors = old_thermostat.remote_sensors
+                if not thermostat.extended_runtime:
+                    thermostat._extended_runtime = old_thermostat.extended_runtime
+                if not thermostat.settings:
+                    thermostat._settings = old_thermostat.settings
 
             self._cache[thermostat.identifier] = thermostat
 
@@ -434,6 +487,8 @@ class EcobeeMetricCollector(MetricCollector):
         thermostat_ids_to_remove = self._cache.keys() - new_thermostat_ids
         for thermostat_id in thermostat_ids_to_remove:
             del self._cache[thermostat_id]
+            self._runtime_totals.pop(thermostat_id, None)
+            self._runtime_counted_until.pop(thermostat_id, None)
 
         for thermostat in self._cache.values():
             labels = [
@@ -456,6 +511,32 @@ class EcobeeMetricCollector(MetricCollector):
             desired_cool.add_metric(labels, runtime.desired_cool / 10)
             actual_voc.add_metric(labels, runtime.actual_voc)
             actual_co2.add_metric(labels, runtime.actual_co2)
+            desired_humid.add_metric(labels, runtime.desired_humidity)
+            desired_dehumid.add_metric(labels, runtime.desired_dehumidity)
+
+            extended_runtime: ExtendedRuntime | None = thermostat.extended_runtime
+            if extended_runtime:
+                last_interval = self._count_runtime(
+                    thermostat.identifier, extended_runtime
+                )
+                runtime_reading.add_metric(labels, last_interval.timestamp())
+                for equipment, seconds in self._runtime_totals[
+                    thermostat.identifier
+                ].items():
+                    equipment_runtime.add_metric([*labels, equipment], seconds)
+
+            settings: Settings | None = thermostat.settings
+            if settings:
+                hvac_mode.add_metric(labels, _states(HVAC_MODES, settings.hvac_mode))
+                humidifier_mode.add_metric(
+                    labels, _states(HUMIDIFIER_MODES, settings.humidifier_mode)
+                )
+                dehumidifier_mode.add_metric(
+                    labels, _states(DEHUMIDIFIER_MODES, settings.dehumidifier_mode)
+                )
+                dehumidify_with_ac.add_metric(
+                    labels, 1 if settings.dehumidify_with_a_c else 0
+                )
 
             weather: Weather = thermostat.weather
             forecast: WeatherForecast = weather.forecasts[0]
@@ -483,3 +564,42 @@ class EcobeeMetricCollector(MetricCollector):
                         )
                     elif capability.type == "humidity":
                         sensor_humidity.add_metric(sensor_labels, int(capability.value))
+
+    def _count_runtime(
+        self, thermostat_id: str, extended_runtime: ExtendedRuntime
+    ) -> datetime:
+        """
+        Add each interval's equipment run seconds to the thermostat's totals once.
+        Returns the end of the newest interval.
+        """
+        # lastReadingTimestamp is UTC and marks the end of the newest of the 3
+        # intervals, so interval i (newest first) ends i * 5 minutes before it
+        last_interval = datetime.strptime(
+            extended_runtime.last_reading_timestamp, "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=UTC)
+
+        totals = self._runtime_totals.setdefault(thermostat_id, {})
+        counted_until = self._runtime_counted_until.get(thermostat_id)
+
+        for attr, equipment in EXTENDED_RUNTIME_EQUIPMENT.items():
+            seconds: list[int] = getattr(extended_runtime, attr) or []
+            total = totals.setdefault(equipment, 0)
+            # The first readings after startup only set the baseline: they may
+            # already have been counted before a restart
+            if counted_until is not None:
+                for i, value in enumerate(reversed(seconds)):
+                    if last_interval - i * RUNTIME_INTERVAL <= counted_until:
+                        break
+                    total += value or 0
+            totals[equipment] = total
+
+        if counted_until is None or last_interval > counted_until:
+            self._runtime_counted_until[thermostat_id] = last_interval
+
+        return last_interval
+
+
+def _states(known: list[str], value: str | None) -> dict[str, bool]:
+    # Keep values ecobee adds later visible instead of dropping them
+    states = known if value is None or value in known else [*known, value]
+    return {s: s == value for s in states}
