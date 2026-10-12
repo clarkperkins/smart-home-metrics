@@ -1,7 +1,9 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import cast
 
 import pytest
+from prometheus_client.samples import Sample
 from pyecobee import (
     ExtendedRuntime,
     Runtime,
@@ -90,19 +92,39 @@ def collector(monkeypatch) -> EcobeeMetricCollector:
     return EcobeeMetricCollector(session=None)  # type: ignore[arg-type]
 
 
+async def collect_samples(c: EcobeeMetricCollector) -> list[Sample]:
+    return [
+        sample for metric in await c.perform_collection() for sample in metric.samples
+    ]
+
+
 async def collect(c: EcobeeMetricCollector) -> dict[tuple[str, tuple], float]:
     samples = {}
-    for metric in await c.perform_collection():
-        for sample in metric.samples:
-            labels = {k: v for k, v in sample.labels.items() if k not in LABELS}
-            samples[(sample.name, tuple(sorted(labels.items())))] = sample.value
+    for sample in await collect_samples(c):
+        labels = {k: v for k, v in sample.labels.items() if k not in LABELS}
+        samples[(sample.name, tuple(sorted(labels.items())))] = sample.value
     return samples
 
 
-def runtime_seconds(samples: dict[tuple[str, tuple], Any], equipment: str) -> float:
-    return samples[
-        ("ecobee_equipment_runtime_seconds_total", (("equipment", equipment),))
+def runtime_points(samples: list[Sample], equipment: str) -> list[tuple[str, float]]:
+    """(interval end as HH:MM UTC, total) for each sample exported, in order"""
+    return [
+        (
+            datetime.fromtimestamp(cast(float, s.timestamp), UTC).strftime("%H:%M"),
+            s.value,
+        )
+        for s in samples
+        if s.name == "ecobee_equipment_runtime_seconds_total"
+        and s.labels["equipment"] == equipment
     ]
+
+
+def reading_timestamp(samples: list[Sample]) -> float:
+    (sample,) = [
+        s for s in samples if s.name == "ecobee_extended_runtime_timestamp_seconds"
+    ]
+    assert sample.timestamp is None
+    return sample.value
 
 
 @pytest.mark.asyncio
@@ -152,7 +174,7 @@ async def test_unknown_mode_is_its_own_state(collector):
 
 
 @pytest.mark.asyncio
-async def test_equipment_runtime_counts_each_interval_once(collector):
+async def test_equipment_runtime_exports_each_interval_once(collector):
     # First readings only set the baseline
     collector.ecobee.thermostat = thermostat(
         runtime=RUNTIME,
@@ -160,32 +182,43 @@ async def test_equipment_runtime_counts_each_interval_once(collector):
             "2026-10-11 14:00:00", cool1=[300, 300, 300], fan=[300, 300, 300]
         ),
     )
-    samples = await collect(collector)
+    samples = await collect_samples(collector)
 
-    assert runtime_seconds(samples, "compCool1") == 0
-    assert runtime_seconds(samples, "heatPump") == 0
-    assert samples[("ecobee_extended_runtime_timestamp_seconds", ())] == 1791727200
+    assert runtime_points(samples, "compCool1") == [("14:00", 0)]
+    assert runtime_points(samples, "heatPump") == [("14:00", 0)]
+    assert reading_timestamp(samples) == 1791727200
 
-    # The next 15 minutes: all 3 intervals are new
+    # The next 15 minutes: all 3 intervals are new, each at its own end time
     collector.ecobee.revisions = "t1:a1:r1:i2"
     collector.ecobee.thermostat = thermostat(
         extended=extended_runtime(
             "2026-10-11 14:15:00", cool1=[120, 0, 300], fan=[300, 30, 300]
         )
     )
-    samples = await collect(collector)
+    samples = await collect_samples(collector)
 
     assert collector.ecobee.selections[-1].include_extended_runtime
-    assert runtime_seconds(samples, "compCool1") == 420
-    assert runtime_seconds(samples, "fan") == 630
-    assert runtime_seconds(samples, "heatPump") == 0
+    assert runtime_points(samples, "compCool1") == [
+        ("14:05", 120),
+        ("14:10", 120),
+        ("14:15", 420),
+    ]
+    assert runtime_points(samples, "fan") == [
+        ("14:05", 300),
+        ("14:10", 330),
+        ("14:15", 630),
+    ]
+    # No readings for it in this batch, so nothing new to export
+    assert runtime_points(samples, "heatPump") == []
 
-    # Nothing new: the cached readings aren't counted again
+    # Nothing new: nothing is exported again (it would be out of order), but
+    # the reading timestamp still is
     collector.ecobee.thermostat = thermostat()
-    samples = await collect(collector)
+    samples = await collect_samples(collector)
 
     assert not collector.ecobee.selections[-1].include_extended_runtime
-    assert runtime_seconds(samples, "compCool1") == 420
+    assert runtime_points(samples, "compCool1") == []
+    assert reading_timestamp(samples) == 1791728100
 
     # Readings overlapping the last batch only count the newer intervals
     collector.ecobee.revisions = "t1:a1:r1:i3"
@@ -194,11 +227,11 @@ async def test_equipment_runtime_counts_each_interval_once(collector):
             "2026-10-11 14:20:00", cool1=[0, 300, 200], fan=[30, 300, 200]
         )
     )
-    samples = await collect(collector)
+    samples = await collect_samples(collector)
 
-    assert runtime_seconds(samples, "compCool1") == 620
-    assert runtime_seconds(samples, "fan") == 830
-    assert samples[("ecobee_extended_runtime_timestamp_seconds", ())] == 1791728400
+    assert runtime_points(samples, "compCool1") == [("14:20", 620)]
+    assert runtime_points(samples, "fan") == [("14:20", 830)]
+    assert reading_timestamp(samples) == 1791728400
 
 
 @pytest.mark.asyncio

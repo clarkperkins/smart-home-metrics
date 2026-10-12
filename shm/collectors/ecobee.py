@@ -516,14 +516,18 @@ class EcobeeMetricCollector(MetricCollector):
 
             extended_runtime: ExtendedRuntime | None = thermostat.extended_runtime
             if extended_runtime:
-                last_interval = self._count_runtime(
+                last_interval, new_points = self._count_runtime(
                     thermostat.identifier, extended_runtime
                 )
                 runtime_reading.add_metric(labels, last_interval.timestamp())
-                for equipment, seconds in self._runtime_totals[
-                    thermostat.identifier
-                ].items():
-                    equipment_runtime.add_metric([*labels, equipment], seconds)
+                # Each interval is exported once, at its own end time: the
+                # scrape that follows ecobee's upload carries up to 3 samples
+                # per series. Re-sending them would be out-of-order samples.
+                for equipment, points in new_points.items():
+                    for end, total in points:
+                        equipment_runtime.add_metric(
+                            [*labels, equipment], total, timestamp=end.timestamp()
+                        )
 
             settings: Settings | None = thermostat.settings
             if settings:
@@ -567,10 +571,11 @@ class EcobeeMetricCollector(MetricCollector):
 
     def _count_runtime(
         self, thermostat_id: str, extended_runtime: ExtendedRuntime
-    ) -> datetime:
+    ) -> tuple[datetime, dict[str, list[tuple[datetime, int]]]]:
         """
         Add each interval's equipment run seconds to the thermostat's totals once.
-        Returns the end of the newest interval.
+        Returns the end of the newest interval, and the running total at the end
+        of each newly counted interval (oldest first) per equipment.
         """
         # lastReadingTimestamp is UTC and marks the end of the newest of the 3
         # intervals, so interval i (newest first) ends i * 5 minutes before it
@@ -580,23 +585,31 @@ class EcobeeMetricCollector(MetricCollector):
 
         totals = self._runtime_totals.setdefault(thermostat_id, {})
         counted_until = self._runtime_counted_until.get(thermostat_id)
+        new_points: dict[str, list[tuple[datetime, int]]] = {}
 
         for attr, equipment in EXTENDED_RUNTIME_EQUIPMENT.items():
             seconds: list[int] = getattr(extended_runtime, attr) or []
             total = totals.setdefault(equipment, 0)
-            # The first readings after startup only set the baseline: they may
-            # already have been counted before a restart
-            if counted_until is not None:
-                for i, value in enumerate(reversed(seconds)):
-                    if last_interval - i * RUNTIME_INTERVAL <= counted_until:
-                        break
-                    total += value or 0
+            points = new_points[equipment] = []
+
+            if counted_until is None:
+                # The first readings after startup only set the baseline: they
+                # may already have been counted before a restart
+                points.append((last_interval, total))
+                continue
+
+            for i, value in enumerate(seconds):
+                end = last_interval - (len(seconds) - 1 - i) * RUNTIME_INTERVAL
+                if end <= counted_until:
+                    continue
+                total += value or 0
+                points.append((end, total))
             totals[equipment] = total
 
         if counted_until is None or last_interval > counted_until:
             self._runtime_counted_until[thermostat_id] = last_interval
 
-        return last_interval
+        return last_interval, new_points
 
 
 def _states(known: list[str], value: str | None) -> dict[str, bool]:
