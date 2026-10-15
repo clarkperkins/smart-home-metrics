@@ -176,6 +176,8 @@ Settings and extended runtime are only re-fetched when their revision changes, s
 - Triggers on `main` branch push and tags
 - Runs the Build workflow (which pushes the image), then packages and pushes the Helm chart to `ghcr.io/clarkperkins`
 
+**Dependency updates** (renovate.json5): Renovate opens PRs once a release is 3 days old (security fixes skip the wait) and refreshes `uv.lock` weekly. In-range Python releases get `uv.lock`-only PRs. Python (Dockerfile + `.python-version`), uv (Dockerfile, workflow, `uv_build`), pytest and the `docker/*` actions are grouped. Only minor/patch updates to the `dev` group automerge; runtime dependencies, majors and GitHub Actions wait for review. Versions in workflow env vars and Dockerfile ARGs need a `# renovate: datasource=... depName=...` comment on the line above.
+
 ### Kubernetes Deployment
 
 The service is deployed via Helm chart (charts/smart-home-metrics/):
@@ -189,7 +191,7 @@ The service is deployed via Helm chart (charts/smart-home-metrics/):
 - **Version**: Python 3.12+
 - **Package manager**: [uv](https://docs.astral.sh/uv/) (0.12+), with the `uv_build` backend. `.python-version` names the Python minor version; uv installs a matching interpreter if you don't have one. `uv run <cmd>` syncs `.venv` first if `uv.lock` changed
 - **Dependencies**: Listed in pyproject.toml `dependencies`; dev tools (black, isort, mypy, pylint, pytest) in the `dev` dependency group
-- **Upgrading**: `uv lock --upgrade` (or `--upgrade-package <name>`) moves within the `>=` floors in pyproject.toml. Resolution ignores releases younger than `tool.uv.exclude-newer` (3 days)
+- **Upgrading**: `uv lock --upgrade` (or `--upgrade-package <name>`) moves within the `>=` floors in pyproject.toml. Resolution ignores releases younger than `tool.uv.exclude-newer` (3 days), matching Renovate's `minimumReleaseAge`
 
 ### Tool Configuration
 

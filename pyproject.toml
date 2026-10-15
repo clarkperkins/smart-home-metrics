@@ -42,8 +42,10 @@ dev = [
 [tool.uv]
 # Relative exclude-newer durations need a recent uv.
 required-version = ">=0.12"
-# Don't resolve releases younger than this. Installing from an existing lock
-# is unaffected.
+# Don't resolve releases younger than this. Renovate applies the same age to
+# the PRs it opens, but its lock file maintenance just runs `uv lock --upgrade`,
+# so this is what holds back transitive dependencies. Installing from an
+# existing lock is unaffected.
 exclude-newer = "3 days"
 
 [tool.uv.build-backend]
