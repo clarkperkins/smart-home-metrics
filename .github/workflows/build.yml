@@ -150,6 +150,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            APP_VERSION=${{ needs.docker-meta.outputs.app-version }}
           platforms: ${{ matrix.platform }}
           labels: ${{ needs.docker-meta.outputs.labels }}
           # push-by-digest only means anything when pushing, so fall back to

@@ -56,7 +56,7 @@ make clean
 ### Docker
 ```bash
 # Build Docker image
-docker build -t shm:dev .
+docker build -t shm:dev --build-arg APP_VERSION=0.0.0 .
 
 # Run container
 docker run -p 9000:9000 shm:dev

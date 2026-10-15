@@ -26,10 +26,14 @@ COPY pyproject.toml uv.lock logging.yaml /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project
 
-# Copy self & install
+# Copy self, set the version & install. The step above already checked the
+# lock, and stamping the version makes pyproject.toml disagree with it, so
+# this sync is --frozen rather than --locked.
 COPY shm shm
+ARG APP_VERSION="0.0.0"
+RUN uv version --frozen "$APP_VERSION"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
+    uv sync --frozen --no-dev
 
 FROM python:3.12-slim AS shm
 
