@@ -8,23 +8,28 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install poetry
-RUN python -m pip install poetry virtualenv
+# Install uv
+# renovate: datasource=pypi depName=uv
+ARG UV_VERSION=0.13.0
+RUN python -m pip install --no-cache-dir uv==${UV_VERSION}
 
+# Build the virtualenv where the runtime stage expects it, against the image's
+# own interpreter rather than a uv-managed download.
 ENV VIRTUAL_ENV=/app/venv
-
-# Create & activate virtualenv
-RUN virtualenv $VIRTUAL_ENV
+ENV UV_PROJECT_ENVIRONMENT=$VIRTUAL_ENV
+ENV UV_PYTHON_DOWNLOADS=never
+ENV UV_LINK_MODE=copy
 ENV PATH=$VIRTUAL_ENV/bin:$PATH
 
-COPY pyproject.toml poetry.lock logging.yaml /app/
-RUN poetry install --sync --without=dev --no-root
+# Install python dependencies (but not self)
+COPY pyproject.toml uv.lock logging.yaml /app/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project
 
+# Copy self & install
 COPY shm shm
-
-ARG APP_VERSION="0.0.0"
-RUN poetry version $APP_VERSION
-RUN poetry install --sync --without=dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
 
 FROM python:3.12-slim AS shm
 
