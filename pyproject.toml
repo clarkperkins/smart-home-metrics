@@ -5,7 +5,7 @@ description = "Smart Home Prometheus Metrics"
 authors = [
     { name = "Clark Perkins", email = "clarkperkins@users.noreply.github.com" }
 ]
-requires-python = ">=3.12.0,<4.0"
+requires-python = ">=3.13,<4.0"
 dependencies = [
     "anyio>=4.15.1",
     "colorlog>=6.12.0",
@@ -16,7 +16,7 @@ dependencies = [
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "pyecobee>=1.3.13",
-    "pysmartthings>=3.7.3",
+    "pysmartthings>=4.0.3",
     "pyyaml>=6.0.3",
     "uvicorn>=0.53.0",
 ]
@@ -51,6 +51,13 @@ exclude-newer = "3 days"
 [tool.uv.build-backend]
 # Flat layout: the package lives at ./shm, not ./src/shm.
 module-root = ""
+
+
+[tool.black]
+# Pin the target so formatting is identical no matter which interpreter runs
+# black. Without it black infers the whole requires-python range and its AST
+# safety check fails on anything older than the newest version in that range.
+target-version = ["py313"]
 
 
 [tool.coverage.run]

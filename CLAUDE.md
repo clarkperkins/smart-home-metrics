@@ -188,7 +188,7 @@ The service is deployed via Helm chart (charts/smart-home-metrics/):
 
 ### Python Environment
 
-- **Version**: Python 3.12+
+- **Version**: Python 3.13+ (`requires-python`); the image and CI run the version in `.python-version`
 - **Package manager**: [uv](https://docs.astral.sh/uv/) (0.12+), with the `uv_build` backend. `.python-version` names the Python minor version; uv installs a matching interpreter if you don't have one. `uv run <cmd>` syncs `.venv` first if `uv.lock` changed
 - **Dependencies**: Listed in pyproject.toml `dependencies`; dev tools (black, isort, mypy, pylint, pytest) in the `dev` dependency group
 - **Upgrading**: `uv lock --upgrade` (or `--upgrade-package <name>`) moves within the `>=` floors in pyproject.toml. Resolution ignores releases younger than `tool.uv.exclude-newer` (3 days), matching Renovate's `minimumReleaseAge`
