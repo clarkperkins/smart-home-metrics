@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ RUN uv version --frozen "$APP_VERSION"
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-FROM python:3.12-slim AS shm
+FROM python:3.15-slim AS shm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
