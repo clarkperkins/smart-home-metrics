@@ -1,0 +1,103 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    // Refresh uv.lock (transitive dependencies) weekly.
+    ":maintainLockFilesWeekly",
+  ],
+  // Updates open as soon as they clear minimumReleaseAge; only the lock
+  // refresh above runs on a schedule (Monday mornings).
+  timezone: "America/Chicago",
+
+  // The Mend-hosted app injects mode: "silent" for repos installed under "All
+  // repositories", which opens no PRs or dashboard issue. Pin it here so a
+  // reinstall can't quietly put us back in silent mode.
+  mode: "full",
+
+  labels: ["dependencies"],
+
+  // Give a release a few days to get yanked before we pick it up. Keep in step
+  // with tool.uv.exclude-newer in pyproject.toml, which covers lock maintenance.
+  minimumReleaseAge: "3 days",
+
+  // Lock maintenance re-resolves from scratch, and tool.uv.exclude-newer's
+  // relative "3 days" needs uv >= 0.12 (as does tool.uv.required-version), so
+  // make sure Renovate's own uv is new enough.
+  constraints: {
+    uv: ">=0.12.0",
+  },
+
+  // Fixes for known vulnerabilities skip the release age.
+  vulnerabilityAlerts: {
+    labels: ["dependencies", "security"],
+    minimumReleaseAge: null,
+  },
+
+  customManagers: [
+    {
+      // Versions pinned in workflow env vars and Dockerfile ARGs, which no
+      // built-in manager reads: uv, in the CI workflow and the image.
+      customType: "regex",
+      managerFilePatterns: [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/",
+        "/(^|/)Dockerfile$/",
+      ],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+(?:ARG\\s+)?[\\w-]+[:=]\\s*[\"']?(?<currentValue>[^\"'\\s]+)[\"']?",
+      ],
+    },
+  ],
+
+  packageRules: [
+    {
+      // pep621's default strategy leaves a satisfied range alone, so a
+      // ">=floor" dependency would only ever move with lock maintenance. This
+      // opens a uv.lock-only PR for in-range releases and still rewrites the
+      // range for out-of-range ones.
+      matchManagers: ["pep621"],
+      rangeStrategy: "update-lockfile",
+    },
+    {
+      groupName: "pytest",
+      matchPackageNames: ["pytest", "pytest-*"],
+    },
+    {
+      // The interpreter shows up in the Dockerfile (both stages) and
+      // .python-version; one PR keeps them from drifting apart. "none" keeps
+      // an upgrade still inside minimumReleaseAge in the branch (behind a
+      // pending stability check) instead of dropping it and opening a partial
+      // group.
+      groupName: "python",
+      matchDepNames: ["python"],
+      internalChecksFilter: "none",
+    },
+    {
+      // A floating Docker tag's timestamp is its last rebuild, not the Python
+      // release, so it would hold the group every time the image is re-pushed.
+      // Every Python reference (including .python-version, via the pyenv
+      // manager) resolves through this datasource, so minor bumps skip the
+      // release age; they're never automerged, so a human still gates them.
+      matchDatasources: ["docker"],
+      matchDepNames: ["python"],
+      minimumReleaseAge: null,
+    },
+    {
+      // The CLI (Dockerfile, CI) and the build backend ship in lockstep.
+      groupName: "uv",
+      matchPackageNames: ["uv", "uv_build"],
+    },
+    {
+      groupName: "docker github actions",
+      matchManagers: ["github-actions"],
+      matchPackageNames: ["docker/*"],
+    },
+    {
+      // Low-risk updates merge themselves once CI is green. Majors, runtime
+      // dependencies and GitHub Actions (which run with the repo's secrets)
+      // still wait for a human.
+      matchDepTypes: ["dependency-groups"],
+      matchUpdateTypes: ["minor", "patch"],
+      automerge: true,
+    },
+  ],
+}
