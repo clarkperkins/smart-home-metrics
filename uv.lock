@@ -3,7 +3,8 @@ revision = 5
 requires-python = ">=3.12.0, <4.0"
 resolution-markers = [
     "python_full_version >= '3.15'",
-    "python_full_version < '3.15'",
+    "python_full_version >= '3.13' and python_full_version < '3.15'",
+    "python_full_version < '3.13'",
 ]
 
 [options]
@@ -1496,7 +1497,7 @@ name = "pysmartthings"
 version = "3.7.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.15'",
+    "python_full_version < '3.13'",
 ]
 dependencies = [
     { name = "aiohttp" },
@@ -1512,10 +1513,11 @@ wheels = [
 
 [[package]]
 name = "pysmartthings"
-version = "4.0.1"
+version = "4.0.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15'",
+    "python_full_version >= '3.13' and python_full_version < '3.15'",
 ]
 dependencies = [
     { name = "aiohttp" },
@@ -1523,9 +1525,9 @@ dependencies = [
     { name = "orjson" },
     { name = "yarl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/f0/59113701d95a16b97bda41996f356a00eb34f2a320da7771f9ceda3bb7e9/pysmartthings-4.0.1.tar.gz", hash = "sha256:eb8f83a993c8a2a02020b8029b78e1761856605541ddab2adbb006cd5a935736", size = 80433, upload-time = "2026-06-05T11:07:14.619Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/a5/b63e610fe26d008a634fe0f8f06a0a0d04df407c5a5a6136a4e014c02612/pysmartthings-4.0.3.tar.gz", hash = "sha256:58c4b7e21ff4d1351f425d70191d61f558f04c5de4670c576b4e4d43e1cbc6d5", size = 86514, upload-time = "2026-09-19T14:34:18.696Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/b2/5cb1215f9098fac55292ee1a76464869d5e794ffa1ee8c33969bac42ec5c/pysmartthings-4.0.1-py3-none-any.whl", hash = "sha256:e5197e7da64384074e85a63a3b6bacfcb397af0e8181efa5844a739c25a625bc", size = 82006, upload-time = "2026-06-05T11:07:13.285Z" },
+    { url = "https://files.pythonhosted.org/packages/67/c3/4c3969d4e5077aa9d8ae9403fa805ffd6eb567ab989a4f057a040e645576/pysmartthings-4.0.3-py3-none-any.whl", hash = "sha256:77bf3182658cd74a96f24b46c9fef45d744405075297a432228d9807de11aa6b", size = 87751, upload-time = "2026-09-19T14:34:17.238Z" },
 ]
 
 [[package]]
@@ -1717,8 +1719,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyecobee" },
-    { name = "pysmartthings", version = "3.7.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
-    { name = "pysmartthings", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
+    { name = "pysmartthings", version = "3.7.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "pysmartthings", version = "4.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
