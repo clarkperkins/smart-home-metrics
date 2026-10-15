@@ -16,11 +16,11 @@ The service runs as a containerized application designed for Kubernetes deployme
 
 ### Environment Setup
 ```bash
-# Install dependencies with Poetry
-poetry install
+# Install dependencies (including the dev group) into .venv
+uv sync
 
 # Run the service locally
-poetry run uvicorn --log-config logging.yaml --host 0.0.0.0 --port 9000 shm.main:app
+uv run uvicorn --log-config logging.yaml --host 0.0.0.0 --port 9000 shm.main:app
 ```
 
 ### Code Quality
@@ -56,7 +56,7 @@ make clean
 ### Docker
 ```bash
 # Build Docker image
-docker build -t shm:dev --build-arg APP_VERSION=0.0.0 .
+docker build -t shm:dev .
 
 # Run container
 docker run -p 9000:9000 shm:dev
@@ -187,9 +187,9 @@ The service is deployed via Helm chart (charts/smart-home-metrics/):
 ### Python Environment
 
 - **Version**: Python 3.12+
-- **Package manager**: Poetry with PEP 621 pyproject.toml
-- **Dependencies**: Listed in pyproject.toml dependencies array
-- **Dev tools**: black, isort, mypy, pylint, pytest
+- **Package manager**: [uv](https://docs.astral.sh/uv/) (0.12+), with the `uv_build` backend. `.python-version` names the Python minor version; uv installs a matching interpreter if you don't have one. `uv run <cmd>` syncs `.venv` first if `uv.lock` changed
+- **Dependencies**: Listed in pyproject.toml `dependencies`; dev tools (black, isort, mypy, pylint, pytest) in the `dev` dependency group
+- **Upgrading**: `uv lock --upgrade` (or `--upgrade-package <name>`) moves within the `>=` floors in pyproject.toml. Resolution ignores releases younger than `tool.uv.exclude-newer` (3 days)
 
 ### Tool Configuration
 
