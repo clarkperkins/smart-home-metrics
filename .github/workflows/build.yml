@@ -12,7 +12,7 @@ on:
 
 env:
   # renovate: datasource=pypi depName=uv
-  UV_VERSION: "0.13.0"
+  UV_VERSION: "0.13.1"
   REGISTRY_IMAGE: ghcr.io/clarkperkins/shm
 
 # Callers cap these; the docker jobs also need packages: write to push.
