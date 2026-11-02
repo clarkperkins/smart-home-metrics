@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# A force-push (e.g. Renovate rebasing) supersedes the PR's in-flight run.
+# Deploy runs on main live in deploy.yml and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

@@ -23,6 +23,11 @@ jobs:
   docker-meta:
     name: Docker Meta
 
+    # Never push an image from a commit that failed checks or tests. Helm in
+    # deploy.yml already waits on this whole workflow.
+    needs:
+      - build
+
     runs-on: ubuntu-latest
 
     outputs:
